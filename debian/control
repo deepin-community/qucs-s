@@ -1,15 +1,30 @@
-Source: template-repository
-Section: unknown
+Source: qucs-s
+Section: electronics
 Priority: optional
-Maintainer: Tsic404 <liuheng@deepin.org>
-Build-Depends: debhelper (>= 11)
-Standards-Version: 4.1.3
-Homepage: https://github.com/deepin-community/template-repository
-#Vcs-Browser: https://salsa.debian.org/debian/deepin-community-template-repository
-#Vcs-Git: https://salsa.debian.org/debian/deepin-community-template-repository.git
+Maintainer: lhdjply <lhdjply@126.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake, 
+               flex,
+               bison,
+               qt6-base-dev,
+               qt6-tools-dev,
+               qt6-svg-dev,
+               qt6-charts-dev,
+               gperf,
+               dos2unix
+Rules-Requires-Root: no
+Standards-Version: 4.6.0
+Homepage: https://github.com/ra3xdh/qucs_s/
+Vcs-Browser: https://github.com/deepin-community/qucs-s
+Vcs-Git: https://github.com/deepin-community/qucs-s.git
 
-Package: template-repository
+Package: qucs-s
+Section: electronics
+Priority: optional
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: <insert up to 60 chars description>
- <insert long description, indented with spaces>
+Depends: 
+ ${shlibs:Depends},
+ ${misc:Depends}
+Recommends: ngspice
+Description: Quite Universal Circuit Simulator with SPICE (Qucs-S)
+ allows to simulate electronic circuits with SPICE-compatible kernels
