@@ -1,0 +1,26 @@
+From a313935e15570febcd1e469e849dbab30fdb33e8 Mon Sep 17 00:00:00 2001
+From: lhdjply <lhdjply@126.com>
+Date: Mon, 26 May 2025 09:44:58 +0800
+Subject: [PATCH] use the official theme
+
+Signed-off-by: lhdjply <lhdjply@126.com>
+---
+ qucs/qucs-s.desktop | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/qucs/qucs-s.desktop b/qucs/qucs-s.desktop
+index b6c7f18..02498a5 100644
+--- a/qucs/qucs-s.desktop
++++ b/qucs/qucs-s.desktop
+@@ -2,7 +2,7 @@
+ Encoding=UTF-8
+ Name=Qucs-S
+ Comment=An Universal GUI for Circuit Simulators
+-Exec=qucs-s %U
++Exec=env QT_STYLE_OVERRIDE=Fusion qucs-s %U
+ Icon=qucs-s
+ Terminal=false
+ 
+-- 
+2.47.2
+
