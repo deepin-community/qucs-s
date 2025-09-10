@@ -28,6 +28,7 @@
 #include "../paintings/id_text.h"
 #include "dialogs/sweepdialog.h"
 #include "components/subcircuit.h"
+#include "wire.h"
 
 
 #include <QPlainTextEdit>
@@ -66,6 +67,9 @@ AbstractSpiceKernel::AbstractSpiceKernel(Schematic *schematic, QObject *parent) 
         a_DC_OP_only = true;      // If schematic contains DC simulation only
         a_schematic->setShowBias(0);
     }
+
+    // Enforce dataset prefix from config:
+    a_needsPrefix = QucsSettings.alwaysPrefixDataset;
 
     a_workdir = QucsSettings.S4Qworkdir;
     QFileInfo inf(a_workdir);
@@ -128,7 +132,7 @@ bool AbstractSpiceKernel::prepareSpiceNetlist(QTextStream &stream, bool isSubckt
 bool AbstractSpiceKernel::checkSchematic(QStringList &incompat)
 {
     incompat.clear();
-    for(Component *pc = a_schematic->a_DocComps.first(); pc != 0; pc = a_schematic->a_DocComps.next()) {
+    for(Component *pc : a_schematic->a_DocComps) {
         if ((!pc->isEquation)&&!(pc->isProbe)) {
             if (pc->SpiceModel.isEmpty() && pc->isActive) incompat.append(pc->Name);
         }
@@ -143,27 +147,18 @@ bool AbstractSpiceKernel::checkSchematic(QStringList &incompat)
  */
 bool AbstractSpiceKernel::checkGround()
 {
-    bool r = false;
-    for(Component *pc = a_schematic->a_DocComps.first(); pc != 0; pc = a_schematic->a_DocComps.next()) {
-        if (pc->Model=="GND") {
-            r = true;
-            break;
-        }
-    }
-    return r;
+    return std::ranges::any_of(
+        a_schematic->a_DocComps,
+        [](auto* c) { return c->Model == "GND"; });
 }
 
 bool AbstractSpiceKernel::checkSimulations()
 {
     if (a_DC_OP_only) return true;
-    bool r = false;
-    for(Component *pc = a_schematic->a_DocComps.first(); pc != 0; pc = a_schematic->a_DocComps.next()) {
-        if (pc->isSimulation) {
-            r = true;
-            break;
-        }
-    }
-    return r;
+
+    return std::ranges::any_of(
+        a_schematic->a_DocComps,
+        [](auto* c) { return c->isSimulation; });
 }
 
 bool AbstractSpiceKernel::checkDCSimulation()
@@ -196,7 +191,7 @@ void AbstractSpiceKernel::startNetlist(QTextStream &stream, spicecompat::SpiceDi
         QString s;
 
         // User-defined functions
-        for(Component *pc = a_schematic->a_DocComps.first(); pc != 0; pc = a_schematic->a_DocComps.next()) {
+        for(Component *pc : a_schematic->a_DocComps) {
             if ((pc->SpiceModel==".FUNC")||
                 (pc->SpiceModel=="INCLSCR")) {
                 s = pc->getExpression();
@@ -206,25 +201,25 @@ void AbstractSpiceKernel::startNetlist(QTextStream &stream, spicecompat::SpiceDi
 
         // create .IC from wire labels
         QStringList wire_labels;
-        for(Wire *pw = a_schematic->a_DocWires.first(); pw != 0; pw = a_schematic->a_DocWires.next()) {
-            if (pw->Label != nullptr) {
-                QString label = pw->Label->Name;
+        for(Wire *pw : a_schematic->a_DocWires) {
+            if (pw->hasLabel()) {
+                QString label = pw->label()->Name;
                 if (!wire_labels.contains(label)) wire_labels.append(label);
                 else continue;
-                QString ic = pw->Label->initValue;
+                QString ic = pw->label()->initValue;
                 if (!ic.isEmpty()) {
                     QString ic_str = QStringLiteral(".IC v(%1)=%2\n").arg(label).arg(ic);
                     stream<<ic_str;
                 }
             }
         }
-        for(Node *pn = a_schematic->a_DocNodes.first(); pn != 0; pn = a_schematic->a_DocNodes.next()) {
+        for(Node *pn : a_schematic->a_DocNodes) {
             Conductor *pw = (Conductor*) pn;
-            if (pw->Label != nullptr) {
-                QString label = pw->Label->Name;
+            if (pw->hasLabel()) {
+                QString label = pw->label()->Name;
                 if (!wire_labels.contains(label)) wire_labels.append(label);
                 else continue;
-                QString ic = pw->Label->initValue;
+                QString ic = pw->label()->initValue;
                 if (!ic.isEmpty()) {
                     QString ic_str = QStringLiteral(".IC v(%1)=%2\n").arg(label).arg(ic);
                     stream<<ic_str;
@@ -233,7 +228,7 @@ void AbstractSpiceKernel::startNetlist(QTextStream &stream, spicecompat::SpiceDi
         }
 
         // Parameters, Initial conditions, Options
-        for(Component *pc = a_schematic->a_DocComps.first(); pc != 0; pc = a_schematic->a_DocComps.next()) {
+        for(Component *pc : a_schematic->a_DocComps) {
             if (pc->isEquation) {
                 s = pc->getExpression(dialect);
                 stream<<s;
@@ -241,7 +236,7 @@ void AbstractSpiceKernel::startNetlist(QTextStream &stream, spicecompat::SpiceDi
         }
 
         // Components
-        for(Component *pc = a_schematic->a_DocComps.first(); pc != 0; pc = a_schematic->a_DocComps.next()) {
+        for(Component *pc : a_schematic->a_DocComps) {
           if(a_schematic->getIsAnalog() &&
              !(pc->isSimulation) &&
              !(pc->isEquation)) {
@@ -251,7 +246,7 @@ void AbstractSpiceKernel::startNetlist(QTextStream &stream, spicecompat::SpiceDi
         }
 
         // Modelcards
-        for(Component *pc = a_schematic->a_DocComps.first(); pc != 0; pc = a_schematic->a_DocComps.next()) {
+        for(Component *pc : a_schematic->a_DocComps) {
             if (pc->SpiceModel==".MODEL") {
                 s = pc->getSpiceModel();
                 stream<<s;
@@ -270,13 +265,13 @@ void AbstractSpiceKernel::createNetlist(QTextStream&, int ,QStringList&,
 }
 
 /*!
- * \brief AbstractSpiceKernel::createSubNetlsit Output Netlist with
+ * \brief AbstractSpiceKernel::createSubNetlist Output Netlist with
  *        Subcircuit header .SUBCKT
  * \param stream QTextStream that associated with spice netlist file
  * \param xyce Default is false. Should be set in true if netlist is
  *        prepared for Xyce simulator. For Ngspice should be false.
  */
-void AbstractSpiceKernel::createSubNetlsit(QTextStream &stream, bool lib)
+void AbstractSpiceKernel::createSubNetlist(QTextStream &stream, bool lib)
 {
     QString header;
     QString f = misc::properFileName(a_schematic->getDocName());
@@ -288,7 +283,7 @@ void AbstractSpiceKernel::createSubNetlsit(QTextStream &stream, bool lib)
         emit errors(QProcess::FailedToStart);
         return;
     } // Unable to perform spice simulation
-    for(Component *pc = a_schematic->a_DocComps.first(); pc != 0; pc = a_schematic->a_DocComps.next()) {
+    for(Component *pc : a_schematic->a_DocComps) {
         if (pc->Model=="Port") {
             ports.append(qMakePair(pc->Props.first()->Value.toInt(),
                                    pc->Ports.first()->Connection->Name));
@@ -300,13 +295,11 @@ void AbstractSpiceKernel::createSubNetlsit(QTextStream &stream, bool lib)
         header += pp.second + " ";
     }
 
-    Painting *pai;
-    for(pai = a_schematic->a_SymbolPaints.first(); pai != 0; pai = a_schematic->a_SymbolPaints.next())
+    for(Painting* pai : a_schematic->a_SymbolPaints)
       if(pai->Name == ".ID ") {
         ID_Text *pid = (ID_Text*)pai;
-        QList<SubParameter *>::const_iterator it;
-        for(it = pid->Parameter.constBegin(); it != pid->Parameter.constEnd(); it++) {
-            header += (*it)->Name + " "; // keep 'Name' unchanged
+        for (const auto& sub_param : pid->subParameters) {
+            header += sub_param->name + " "; // keep 'Name' unchanged
           //(*tstream) << " " << s.replace("=", "=\"") << '"';
         }
         break;
@@ -344,7 +337,7 @@ void AbstractSpiceKernel::slotSimulate()
  */
 void AbstractSpiceKernel::parseNgSpiceSimOutput(QString ngspice_file, QList< QList<double> > &sim_points,
                                                 QStringList &var_list, bool &isComplex,
-                                                QStringList &digital_vars, QList<int> &dig_vars_dims)
+                                                QStringList &extra_vars, QList<int> &extra_vars_dims)
 {
     isComplex = false;
     bool isBinary = false;
@@ -389,9 +382,9 @@ void AbstractSpiceKernel::parseNgSpiceSimOutput(QString ngspice_file, QList< QLi
                 QString dep_var = lin.section(sep,1,1,QString::SectionSkipEmpty);
                 var_list.append(dep_var);
                 if (lin.contains("dims=")) {
-                  digital_vars.append(dep_var); // XSPICE digital node
+                  extra_vars.append(dep_var); // XSPICE digital node or scalar
                   QString tail = lin.section("dims=",1,1,QString::SectionSkipEmpty);
-                  dig_vars_dims.append(tail.toInt());
+                  extra_vars_dims.append(tail.toInt());
                 }
             }
             continue;
@@ -761,7 +754,8 @@ void AbstractSpiceKernel::parseDC_OPoutputXY(QString xyce_file)
  */
 void AbstractSpiceKernel::parseSTEPOutput(QString ngspice_file,
                      QList< QList<double> > &sim_points,
-                     QStringList &var_list, bool &isComplex)
+                     QStringList &var_list, bool &isComplex,
+                     QStringList &extra_vars, QList<int> &extra_vars_dims)
 {
     isComplex = false;
     bool isBinary = false;
@@ -810,6 +804,11 @@ void AbstractSpiceKernel::parseSTEPOutput(QString ngspice_file,
                     lin = ngsp_data.readLine();
                     QString dep_var = lin.section(sep,1,1,QString::SectionSkipEmpty);
                     var_list.append(dep_var);
+                    if (lin.contains("dims=")) {
+                      extra_vars.append(dep_var); // XSPICE digital node or scalar
+                      QString tail = lin.section("dims=",1,1,QString::SectionSkipEmpty);
+                      extra_vars_dims.append(tail.toInt());
+                    }
                 }
                 header_parsed = true;
                 continue;
@@ -1172,13 +1171,13 @@ void AbstractSpiceKernel::convertToQucsData(const QString &qucs_dataset)
 
     for (const QString& ngspice_output_filename : a_output_files) { // For every simulation convert results to Qucs dataset
         QList< QList<double> > sim_points;
-        QStringList var_list, digital_vars;
+        QStringList var_list, extra_vars;
         QString swp_var,swp_var2;
         QStringList swp_var_val,swp_var2_val;
         bool isComplex = false;
         bool hasParSweep = false;
         bool hasDblParSweep = false;
-        QList<int> dig_vars_dims;
+        QList<int> extra_vars_dims;
 
         QString dataset_prefix;
         bool isCustomPrefix = false;
@@ -1251,7 +1250,7 @@ void AbstractSpiceKernel::convertToQucsData(const QString &qucs_dataset)
                                                     + "spice4qucs." + dataset_prefix + ".cir.res");
             parseResFile(res_file,swp_var,swp_var_val);
 
-            parseSTEPOutput(full_outfile,sim_points,var_list,isComplex);
+            parseSTEPOutput(full_outfile,sim_points,var_list,isComplex, extra_vars, extra_vars_dims);
         } else {
             int OutType = checkRawOutupt(full_outfile,swp_var_val);
             bool hasSwp = false;
@@ -1259,10 +1258,10 @@ void AbstractSpiceKernel::convertToQucsData(const QString &qucs_dataset)
             case spiceRawSwp:
                 hasParSweep = true;
                 swp_var = "Number";
-                parseSTEPOutput(full_outfile,sim_points,var_list,isComplex);
+                parseSTEPOutput(full_outfile,sim_points,var_list,isComplex, extra_vars, extra_vars_dims);
                 break;
             case spiceRaw:
-                parseNgSpiceSimOutput(full_outfile, sim_points, var_list, isComplex, digital_vars, dig_vars_dims);
+                parseNgSpiceSimOutput(full_outfile, sim_points, var_list, isComplex, extra_vars, extra_vars_dims);
                 break;
             case xyceSTD:
                 parseXYCESTDOutput(full_outfile,sim_points,var_list,isComplex,hasSwp);
@@ -1281,8 +1280,8 @@ void AbstractSpiceKernel::convertToQucsData(const QString &qucs_dataset)
         }
         if (var_list.isEmpty()) continue; // nothing to convert
         normalizeVarsNames(var_list, dataset_prefix, isCustomPrefix);
-        digital_vars.prepend(var_list.first());
-        normalizeVarsNames(digital_vars, dataset_prefix, isCustomPrefix);
+        extra_vars.prepend(var_list.first());
+        normalizeVarsNames(extra_vars, dataset_prefix, isCustomPrefix);
 
         QString indep = var_list.first();
         //QList<double> sim_point;
@@ -1325,16 +1324,17 @@ void AbstractSpiceKernel::convertToQucsData(const QString &qucs_dataset)
             ds_stream<<"</indep>\n";
         }
 
-        int dig_var_idx = 0;
+        int var_idx = 0;
         for(int i=1;i<var_list.count();i++) { // output dep var
-            bool is_digital_var = false;
-            bool digital_indep = false;
+            bool is_extra_var = false;
+            bool extra_indep = false; // For XSPICE digital vars or scalar
+            bool is_scalar = false;
             if (indep.isEmpty()) {
               ds_stream<<QStringLiteral("<indep %1 %2>\n").arg(var_list.at(i)).arg(sim_points.count());
             } else {
               QString var = var_list.at(i);
-              is_digital_var = digital_vars.contains(var);
-              if (is_digital_var && !var.endsWith("_steps")) { // XSPICE digital node
+              is_extra_var = extra_vars.contains(var);
+              if (is_extra_var && !var.endsWith("_steps")) { // XSPICE digital node
                 // requires another X-variable; not time
                 QString var2 = var + "_steps";
                 var2.remove("v(");
@@ -1344,18 +1344,45 @@ void AbstractSpiceKernel::convertToQucsData(const QString &qucs_dataset)
                   var2 += " " + swp_var;
                   if (hasDblParSweep) var += " " + swp_var2;
                 }
-                ds_stream<<QStringLiteral("<dep %1 %2>\n").arg(var).arg(var2);
-              } else if (is_digital_var && var.endsWith("_steps") && // indep XSPICE digital var
+                if (var_list.contains(var2)) {
+                  // it is digtial variable
+                  ds_stream<<QStringLiteral("<dep %1 %2>\n").arg(var).arg(var2);
+                } else {
+                  // it is scalar
+                  if (hasParSweep) {
+                    ds_stream<<QStringLiteral("<dep %1 %2>\n").arg(var).arg(swp_var);
+                  } else {
+                    ds_stream<<QStringLiteral("<indep %1 %2>\n")
+                                     .arg(var).arg(extra_vars_dims.at(var_idx));
+                    is_scalar = true;
+                  }
+                }
+              } else if (is_extra_var && var.endsWith("_steps") && // indep XSPICE digital var
                          !var.contains("(") && !var.contains(")")) {
-                digital_indep = true;
-                ds_stream<<QStringLiteral("<indep %1 %2>\n").arg(var).arg(dig_vars_dims.at(dig_var_idx));
+                extra_indep = true;
+                ds_stream<<QStringLiteral("<indep %1 %2>\n").arg(var).arg(extra_vars_dims.at(var_idx));
               } else {
                 ds_stream<<QStringLiteral("<dep %1 %2>\n").arg(var_list.at(i)).arg(indep);
               }
             }
-            int count = 0;
-            for (auto& sim_point : sim_points) {
-                if (is_digital_var && count > dig_vars_dims.at(dig_var_idx)) break;
+
+            int count  = 0;
+            for (int idx = 0; idx < sim_points.count(); idx++) {
+                auto sim_point = sim_points.at(idx);
+                if (!extra_vars_dims.isEmpty()) {
+                  if (hasParSweep) {
+                    int var_length = extra_vars_dims.at(var_idx);
+                    if (is_extra_var && count >= var_length) {
+                      // forward variables with dim= suffix
+                      int indep_cnt = sim_points.count()/swp_var_val.count();
+                      idx = idx + (indep_cnt - var_length - 1);
+                      count = 0;
+                      continue;
+                    }
+                  } else {
+                    if (is_extra_var && idx >= extra_vars_dims.at(var_idx)) break;
+                  }
+                }
                 if (isComplex) {
                     double re=sim_point.at(2*(i-1)+1);
                     double im = sim_point.at(2*i);
@@ -1370,12 +1397,12 @@ void AbstractSpiceKernel::convertToQucsData(const QString &qucs_dataset)
                 }
                 count++;
             }
-            if (indep.isEmpty() || digital_indep) {
+            if (indep.isEmpty() || extra_indep || is_scalar) {
               ds_stream<<"</indep>\n";
             } else {
               ds_stream<<"</dep>\n";
             }
-            if (is_digital_var) dig_var_idx++;
+            if (is_extra_var) var_idx++;
         }
     }
 
@@ -1572,7 +1599,7 @@ bool AbstractSpiceKernel::waitEndOfSimulation()
 QString AbstractSpiceKernel::collectSpiceLibs(Schematic* sch)
 {
   QStringList collected_spicelib;
-  for(Component *pc = sch->a_DocComps.first(); pc != 0; pc = sch->a_DocComps.next()) {
+  for(Component *pc : sch->a_DocComps) {
     if (pc->Model == "Sub") {
       Schematic *sub = new Schematic(0, ((Subcircuit *)pc)->getSubcircuitFile());
       if(!sub->loadDocument())      // load document if possible
@@ -1599,7 +1626,7 @@ QString AbstractSpiceKernel::collectSpiceLibs(Schematic* sch)
 QStringList AbstractSpiceKernel::collectSpiceLibraryFiles(Schematic *sch)
 {
   QStringList collected_spicelib;
-  for(Component *pc = sch->a_DocComps.first(); pc != 0; pc = sch->a_DocComps.next()) {
+  for(Component *pc : sch->a_DocComps) {
     QStringList new_libs;
     if (pc->Model == "Sub") {
       Schematic *sub = new Schematic(nullptr, ((Subcircuit *)pc)->getSubcircuitFile());

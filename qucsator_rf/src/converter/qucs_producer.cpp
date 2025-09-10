@@ -315,6 +315,25 @@ qucs_devices[] = {
     "1 0 0 8 -26 0 0",
     NULL
   },
+  /* CORE */
+  { "CORE", "CORE", "CORE", 4,
+    { "A","K","C","MS","alpha", NULL },
+    NULL,
+    "1 350 140 -40 35 0 0",
+    NULL
+  },
+  /* VDMOS */
+  { "VDMOS", "VDMOS", "M", 4,
+    { "Type","Mul","VtO","Kp", "Phi", "lambda", "Theta", "Rd", "Rs", "Rg",
+      "Kf", "Af", "RQ", "VQ", "Mtriode", "Subshift", "Ksubthres", "BV", "Ibv", "Nbv",
+      "Rds", "Rb", "N", "Tt", "Eg", "Xti", "Is", "Vj", "Fc", "CjO", "M", "Cgdmin",
+      "Cgdmax", "A", "Cgs", NULL },
+    NULL,
+    "1 0 0 15 -26 0 0",
+    NULL
+  }
+,
+
   { NULL, NULL, NULL, 0, { NULL }, NULL, NULL, NULL }
 };
 
@@ -336,8 +355,9 @@ static struct pair_t *
 qucslib_find_prop (struct definition_t * def, const char * key) {
   struct pair_t * pair;
   for (pair = def->pairs; pair; pair = pair->next) {
-    if (!strcmp (pair->key, key))
+    if (!strcmp (pair->key, key)) {
       return pair;
+    }
   }
   return NULL;
 }

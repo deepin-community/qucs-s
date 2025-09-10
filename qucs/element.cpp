@@ -17,6 +17,7 @@
 
 #include "element.h"
 #include "misc.h"
+#include "one_point.h"
 
 #include <cmath>
 #include <QPainter>
@@ -97,35 +98,63 @@ double Text::angle() const {
   return -degrees;
 }
 
-// x and y are relative to component's x and y
-void Property::paint(int x, int y, QPainter* p)
+
+bool Element::moveCenterTo(int x, int y) noexcept
 {
-  p->drawText(x, y, 1, 1, Qt::TextDontClip, Name + "=" + Value, &br);
+  auto old_center = center();
+  moveCenter(x - old_center.x(), y - old_center.y());
+  return x != old_center.x() || y != old_center.y();
 }
 
-Element::Element()
+bool Element::moveCenterTo(const QPoint& p) noexcept
 {
-  Type = isDummyElement;
-  isSelected = false;
-  cx = cy = x1 = y1 = x2 = y2 = 0;
+  return moveCenterTo(p.x(), p.y());
 }
 
-Element::~Element()
+bool Element::moveCenter(int dx, int dy) noexcept
 {
+  cx += dx;
+  cy += dy;
+  return dx != 0 || dy != 0;
 }
 
-void Element::paintScheme(Schematic *)
+bool Element::rotate(int rcx, int rcy) noexcept
 {
+  int ncx = cx;
+  int ncy = cy;
+  qucs_s::geom::rotate_point_ccw(ncx, ncy, rcx, rcy);
+  const bool has_moved = moveCenterTo(ncx, ncy);
+  const bool has_rotated = rotate();
+  return has_rotated || has_moved;
 }
 
-void Element::paintScheme(QPainter *)
+bool Element::rotate(const QPoint& center) noexcept
 {
+  return rotate(center.x(), center.y());
 }
 
-void Element::setCenter(int, int, bool)
+bool Element::mirrorX(int axis) noexcept
 {
+  const bool has_moved = moveCenterTo(cx, qucs_s::geom::mirror_coordinate(cy, axis));
+  const bool has_mirrored = mirrorX();
+  return has_mirrored || has_moved;
 }
 
-void Element::getCenter(int&, int&)
+bool Element::mirrorY(int axis) noexcept
 {
+  const bool has_moved = moveCenterTo(qucs_s::geom::mirror_coordinate(cx, axis), cy);
+  const bool has_mirrored = mirrorY();
+  return has_mirrored || has_moved;
+}
+
+QRect Element::boundingRect() const noexcept
+{
+  return QRect{QPoint{x1, y1}, QPoint{x2, y2}}
+    .normalized()
+    .translated(center());
+}
+
+QPoint Element::center() const noexcept
+{
+  return {cx, cy};
 }

@@ -59,11 +59,12 @@ endif()
 add_compile_definitions(HAVE_CONFIG_H)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg Xml PrintSupport)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg SvgWidgets Xml PrintSupport)
 include_directories(
       ${Qt6Core_INCLUDE_DIRS}
       ${Qt6Widgets_INCLUDE_DIRS}
       ${Qt6Svg_INCLUDE_DIRS}
+      ${Qt6SvgWidgets_INCLUDE_DIRS}
       ${Qt6Xml_INCLUDE_DIRS}
       ${Qt6PrintSupport_INCLUDE_DIRS}
       )
@@ -85,11 +86,7 @@ set(CMAKE_AUTORCC ON)
 
 set(QT_VERSION ${Qt6Core_VERSION})
 
-if (${QT_VERSION} VERSION_LESS "6.7.0")
-    set(CMAKE_CXX_STANDARD 17)
-else()
-    set(CMAKE_CXX_STANDARD 20)
-endif()
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -121,6 +118,7 @@ INCLUDE_DIRECTORIES(
   ${PROJECT_SOURCE_DIR}/components
   ${PROJECT_SOURCE_DIR}/diagrams
   ${PROJECT_SOURCE_DIR}/dialogs
+  ${PROJECT_SOURCE_DIR}/geometry
   #${qucs_SOURCE_DIR}/octave ->no sources here
   ${PROJECT_SOURCE_DIR}/paintings
   ${PROJECT_SOURCE_DIR}/third_party
@@ -129,8 +127,10 @@ INCLUDE_DIRECTORIES(
 #ADD_SUBDIRECTORY( bitmaps ) -> added as resources
 ADD_SUBDIRECTORY( qt3_compat )
 ADD_SUBDIRECTORY( components )
+ADD_SUBDIRECTORY( magnetics )
 ADD_SUBDIRECTORY( diagrams )
 ADD_SUBDIRECTORY( dialogs )
+ADD_SUBDIRECTORY( geometry )
 ADD_SUBDIRECTORY( octave )
 ADD_SUBDIRECTORY( python )
 ADD_SUBDIRECTORY( paintings )
@@ -140,7 +140,7 @@ ADD_SUBDIRECTORY( spicecomponents )
 SET(QUCS_SRCS
   element.cpp	octave_window.cpp	qucsdoc.cpp
   textdoc.cpp  main.cpp	schematic.cpp
-  mnemo.cpp	qucs.cpp
+  mnemo.cpp	qucs.cpp healer.cpp
   module.cpp	schematic_element.cpp	wire.cpp schematic_render.cpp
   mouseactions.cpp qucs_actions.cpp	schematic_file.cpp
   wirelabel.cpp node.cpp qucs_init.cpp
@@ -153,6 +153,7 @@ SET(QUCS_SRCS
 SET(QUCS_HDRS
 element.h
 conductor.h
+healer.h
 main.h
 messagedock.h
 misc.h
@@ -262,8 +263,8 @@ ADD_EXECUTABLE( ${QUCS_NAME} MACOSX_BUNDLE WIN32
 # Tell CMake which libraries we need to link our executable against.
 #
 TARGET_LINK_LIBRARIES( ${QUCS_NAME}
-    components diagrams dialogs paintings extsimkernels spicecomponents qt3_compat
-    Qt6::Core  Qt6::Gui  Qt6::Widgets Qt6::Svg  Qt6::Xml  Qt6::PrintSupport )
+    components diagrams dialogs geometry paintings extsimkernels spicecomponents magnetics qt3_compat
+    Qt6::Core  Qt6::Gui  Qt6::Widgets Qt6::Svg  Qt6::SvgWidgets Qt6::Xml  Qt6::PrintSupport )
 SET_TARGET_PROPERTIES(${QUCS_NAME} PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 #
 # Prepare the installation

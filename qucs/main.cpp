@@ -138,6 +138,7 @@ bool loadSettings()
     QucsSettings.OpenVAFExecutable = _settings::Get().item<QString>("OpenVAFExecutable");
 
     QucsSettings.RFLayoutExecutable = _settings::Get().item<QString>("RFLayoutExecutable");
+    QucsSettings.ResolveSpicePrefix = _settings::Get().item<bool>("ResolveSpicePrefix");
 
     QucsSettings.qucsWorkspaceDir.setPath(_settings::Get().item<QString>("QucsHomeDir"));
     QucsSettings.QucsWorkDir = QucsSettings.qucsWorkspaceDir;
@@ -147,6 +148,8 @@ bool loadSettings()
     QucsSettings.GraphAntiAliasing = _settings::Get().item<bool>("GraphAntiAliasing");
     QucsSettings.TextAntiAliasing = _settings::Get().item<bool>("TextAntiAliasing");
     QucsSettings.fullTraceName = _settings::Get().item<bool>("fullTraceName");
+    QucsSettings.alwaysPrefixDataset = _settings::Get().item<bool>("alwaysPrefixDataset");
+    QucsSettings.RecentProjects = _settings::Get().item<QString>("RecentProjects").split("*", Qt::SkipEmptyParts);
     QucsSettings.RecentDocs = _settings::Get().item<QString>("RecentDocs").split("*", Qt::SkipEmptyParts);
     QucsSettings.numRecentDocs = QucsSettings.RecentDocs.count();
     QucsSettings.spiceExtensions << "*.sp" << "*.cir" << "*.spc" << "*.spi";
@@ -220,6 +223,7 @@ bool saveApplSettings()
     qs.setItem<bool>("GraphAntiAliasing", QucsSettings.GraphAntiAliasing);
     qs.setItem<bool>("TextAntiAliasing", QucsSettings.TextAntiAliasing);
     qs.setItem<bool>("fullTraceName",QucsSettings.fullTraceName);
+    qs.setItem<bool>("alwaysPrefixDataset",QucsSettings.alwaysPrefixDataset);
 
     // Copy the list of directory paths in which Qucs should
     // search for subcircuit schematics from qucsPathList
@@ -456,7 +460,11 @@ int doNgspiceNetlist(QString schematicFileName, QString netlistFileName, bool ne
     return 0;
 }
 
-int doCdlNetlist(QString schematicFileName, QString netlistFileName, bool netlist2Console)
+int doCdlNetlist(
+        QString schematicFileName,
+        QString netlistFileName,
+        bool netlist2Console,
+        bool resolveSpicePrefix)
 {
     QucsSettings.DefaultSimulator = spicecompat::simNgspice;
     Module::registerModules();
@@ -500,7 +508,7 @@ int doCdlNetlist(QString schematicFileName, QString netlistFileName, bool netlis
         }
     }
 
-    CdlNetlistWriter cdlWriter(*netlistStream, schematic.get());
+    CdlNetlistWriter cdlWriter(*netlistStream, schematic.get(), resolveSpicePrefix);
     if (!cdlWriter.write())
     {
         QMessageBox::critical(
@@ -922,15 +930,16 @@ int main(int argc, char *argv[])
     QucsSettings.LangDir = QucsDir.canonicalPath() + "/share/" QUCS_NAME "/lang/";
 
     QucsSettings.LibDir = QucsDir.canonicalPath() + "/share/" QUCS_NAME "/library/";
+    QucsSettings.SpiceLibDir = QucsDir.canonicalPath() + "/share/" QUCS_NAME "/spicelibrary/";
     QucsSettings.OctaveDir = QucsDir.canonicalPath() + "/share/" QUCS_NAME "/octave/";
     QucsSettings.ExamplesDir = QucsDir.canonicalPath() + "/share/" QUCS_NAME "/examples/";
     QucsSettings.DocDir = QucsDir.canonicalPath() + "/share/" QUCS_NAME "/docs/";
     QucsSettings.Editor = "qucs";
 
     /// \todo Make the setting up of all executables below more consistent
-    char *var = NULL; // Don't use QUCSDIR with Qucs-S
+    char *var = nullptr; // Don't use QUCSDIR with Qucs-S
     var = getenv("QUCSATOR");
-    if (var != NULL) {
+    if (var != nullptr) {
         QucsSettings.QucsatorVar = QString(var);
     }
     else {
@@ -938,12 +947,12 @@ int main(int argc, char *argv[])
     }
 
     var = getenv("QUCSCONV");
-    if (var != NULL) {
+    if (var != nullptr) {
         QucsSettings.Qucsconv = QString(var);
     }
 
     var = getenv("ADMSXMLBINDIR");
-    if (var != NULL) {
+    if (var != nullptr) {
         QucsSettings.AdmsXmlBinDir.setPath(QString(var));
     }
     else {
@@ -962,7 +971,7 @@ int main(int argc, char *argv[])
     }
 
     var = getenv("ASCOBINDIR");
-    if (var != NULL) {
+    if (var != nullptr) {
         QucsSettings.AscoBinDir.setPath(QString(var));
     }
     else {
@@ -981,7 +990,7 @@ int main(int argc, char *argv[])
     }
 
     var = getenv("QUCS_OCTAVE");
-    if (var != NULL) {
+    if (var != nullptr) {
         QucsSettings.QucsOctave = QString(var);
     } else {
         QucsSettings.QucsOctave.clear();
@@ -1073,6 +1082,7 @@ int main(int argc, char *argv[])
         },
         {"list-entries", QCoreApplication::translate("main", "list component entry formats for schematic and netlist")},
         {{"c", "netlist2Console"}, QCoreApplication::translate("main", "write netlist to console")},
+        {{"x", "spiceprefix"}, QCoreApplication::translate("main", "resolve spice prefix during netlist CDL")},
     });
 
     parser.process(cmdArgs);
@@ -1114,6 +1124,7 @@ int main(int argc, char *argv[])
     const bool xyce_flag(parser.isSet("xyce"));
     const bool run_flag(parser.isSet("run"));
     const bool netlist2Console(parser.isSet("netlist2Console"));
+    const bool spiceprefix(parser.isSet("spiceprefix"));
 
 #if 0
     std::cout << "Current cli values:" << std::endl;
@@ -1130,6 +1141,7 @@ int main(int argc, char *argv[])
     std::cout << "xyce_flag: " << xyce_flag << std::endl;
     std::cout << "run_flag: " << run_flag << std::endl;
     std::cout << "netlist2Console: " << netlist2Console << std::endl;
+    std::cout << "spiceprefix: " << spiceprefix << std::endl;
     std::cout << "icons: " << parser.isSet("icons") << std::endl;
     std::cout << "doc: " << parser.isSet("doc") << std::endl;
     std::cout << "list-entries: " << parser.isSet("list-entries") << std::endl;
@@ -1194,7 +1206,7 @@ int main(int argc, char *argv[])
                 }
                 else if (cdl_flag)
                 {
-                    return doCdlNetlist(inputfile, outputfile, netlist2Console);
+                    return doCdlNetlist(inputfile, outputfile, netlist2Console, spiceprefix);
                 }
                 else if (xyce_flag)
                 {

@@ -18,6 +18,7 @@
 #include "comp_1bit.h"
 #include "node.h"
 #include "misc.h"
+#include "node.h"
 
 comp_1bit::comp_1bit()
 {
@@ -42,7 +43,7 @@ Component * comp_1bit::newOne()
 {
   comp_1bit * p = new comp_1bit();
   p->Props.front()->Value = Props.front()->Value; 
-  p->recreate(0); 
+  p->recreate();
   return p;
 }
 

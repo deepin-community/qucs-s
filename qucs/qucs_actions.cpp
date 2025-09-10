@@ -23,10 +23,8 @@
 
 #include <QtCore>
 #include <stdlib.h>
-#include <limits.h>
 
 #include <QProcess>
-#include <qt3_compat/q3ptrlist.h>
 #include <QRegularExpressionValidator>
 #include <QLineEdit>
 #include <QAction>
@@ -61,6 +59,10 @@
 #include "dialogs/importdialog.h"
 #include "dialogs/aboutdialog.h"
 #include "module.h"
+#include "diagram.h"
+#include "node.h"
+#include "wirelabel.h"
+#include "wire.h"
 
 #include "extsimkernels/xyce.h"
 
@@ -82,11 +84,11 @@ bool QucsApp::performToggleAction(bool on, QAction *Action,
 
   // Perform toggle release clean up.
   if(!on) {
-    MouseMoveAction = 0;
-    MousePressAction = 0;
-    MouseReleaseAction = 0;
-    MouseDoubleClickAction = 0;
-    activeAction = 0;   // no action active
+    MouseMoveAction = nullptr;
+    MousePressAction = nullptr;
+    MouseReleaseAction = nullptr;
+    MouseDoubleClickAction = nullptr;
+    activeAction = nullptr;   // no action active
 
     // Return to select mode.
     slotEscape();
@@ -111,8 +113,8 @@ bool QucsApp::performToggleAction(bool on, QAction *Action,
 
     MouseMoveAction = MouseMove;
     MousePressAction = MousePress;
-    MouseReleaseAction = 0;
-    MouseDoubleClickAction = 0;
+    MouseReleaseAction = nullptr;
+    MouseDoubleClickAction = nullptr;
 
   } while(false);   // to perform "break"
 
@@ -312,6 +314,9 @@ void QucsApp::slotSelect(bool on)
     select->blockSignals(true);
     select->setChecked(false);
     select->blockSignals(false);
+
+    // Clear wiring modes hint if any
+    statusBar()->clearMessage();
     return;
   }
 
@@ -376,11 +381,11 @@ void QucsApp::slotEditPaste(bool on)
 
     if(!on)
     {
-      MouseMoveAction = 0;
-      MousePressAction = 0;
-      MouseReleaseAction = 0;
-      MouseDoubleClickAction = 0;
-      activeAction = 0;   // no action active
+      MouseMoveAction = nullptr;
+      MousePressAction = nullptr;
+      MouseReleaseAction = nullptr;
+      MouseDoubleClickAction = nullptr;
+      activeAction = nullptr;   // no action active
       return;
     }
 
@@ -402,9 +407,9 @@ void QucsApp::slotEditPaste(bool on)
 
     MouseMoveAction = &MouseActions::MMovePaste;
     view->movingRotated = 0;
-    MousePressAction = 0;
-    MouseReleaseAction = 0;
-    MouseDoubleClickAction = 0;
+    MousePressAction = nullptr;
+    MouseReleaseAction = nullptr;
+    MouseDoubleClickAction = nullptr;
   }
 }
 
@@ -428,13 +433,13 @@ void QucsApp::slotInsertEntity ()
 void QucsApp::slotInsertEquation(bool on)
 {
   slotHideEdit(); // disable text edit of component property
-  MouseReleaseAction = 0;
-  MouseDoubleClickAction = 0;
+  MouseReleaseAction = nullptr;
+  MouseDoubleClickAction = nullptr;
 
   if(!on) {
-    MouseMoveAction = 0;
-    MousePressAction = 0;
-    activeAction = 0;   // no action active
+    MouseMoveAction = nullptr;
+    MousePressAction = nullptr;
+    activeAction = nullptr;   // no action active
     return;
   }
   if(activeAction) {
@@ -462,13 +467,13 @@ void QucsApp::slotInsertEquation(bool on)
 void QucsApp::slotInsertGround(bool on)
 {
   slotHideEdit(); // disable text edit of component property
-  MouseReleaseAction = 0;
-  MouseDoubleClickAction = 0;
+  MouseReleaseAction = nullptr;
+  MouseDoubleClickAction = nullptr;
 
   if(!on) {
-    MouseMoveAction = 0;
-    MousePressAction = 0;
-    activeAction = 0;   // no action active
+    MouseMoveAction = nullptr;
+    MousePressAction = nullptr;
+    activeAction = nullptr;   // no action active
     return;
   }
   if(activeAction) {
@@ -492,13 +497,13 @@ void QucsApp::slotInsertGround(bool on)
 void QucsApp::slotInsertPort(bool on)
 {
   slotHideEdit(); // disable text edit of component property
-  MouseReleaseAction = 0;
-  MouseDoubleClickAction = 0;
+  MouseReleaseAction = nullptr;
+  MouseDoubleClickAction = nullptr;
 
   if(!on) {
-    MouseMoveAction = 0;
-    MousePressAction = 0;
-    activeAction = 0;   // no action active
+    MouseMoveAction = nullptr;
+    MousePressAction = nullptr;
+    activeAction = nullptr;   // no action active
     return;
   }
   if(activeAction) {
@@ -692,7 +697,7 @@ extern QString lastDirOpenSave; // to remember last directory and file
 // ------------------------------------------------------------------------
 // Is called by slotShowLastMsg(), by slotShowLastNetlist() and from the
 // component edit dialog.
-void QucsApp::editFile(const QString& File)
+void QucsApp::editFile(const QString& File, bool reloadFile)
 {
     if ((QucsSettings.Editor.toLower() == "qucs") || QucsSettings.Editor.isEmpty())
     {
@@ -711,7 +716,7 @@ void QucsApp::editFile(const QString& File)
             if(!finfo.exists())
                 statusBar()->showMessage(tr("Opening aborted, file not found."), 2000);
             else {
-                gotoPage(File);
+                gotoPage(File, reloadFile);
                 lastDirOpenSave = File;   // remember last directory and file
                 statusBar()->showMessage(tr("Ready."));
             }
@@ -770,7 +775,7 @@ void QucsApp::editFile(const QString& File)
 // Is called to show the output messages of the last simulation.
 void QucsApp::slotShowLastMsg()
 {
-  editFile(QucsSettings.tempFilesDir.filePath("log.txt"));
+  editFile(QucsSettings.tempFilesDir.filePath("log.txt"), /*reloadFile=*/true);
 }
 
 // ------------------------------------------------------------------------
@@ -823,7 +828,7 @@ void QucsApp::slotShowLastNetlist()
     }
 
     for(const auto &netlist: netlists) {
-        editFile(netlist);
+        editFile(netlist, /*reloadFile=*/true);
     }
 }
 
@@ -880,8 +885,18 @@ void QucsApp::slotCallPwrComb()
 
 void QucsApp::slotCallSPAR_Viewer()
 {
-  auto currentStyle = QApplication::style()->objectName();
-  launchTool(QUCS_NAME "spar-viewer", "s-parameter viewer",(QStringList() << "-style" << currentStyle));
+
+  QString project_name = this->ProjName;
+  QString project_path;
+  QStringList args; // Arguments to pass to the tool, i.e. the project folder to monitor files
+
+  if (!project_name.isEmpty()) {
+    project_path = QucsSettings.projsDir.filePath(this->ProjName);
+    project_path += QString("_prj");
+    args.append(project_path);
+  }
+
+  launchTool(QUCS_NAME "spar-viewer", "s-parameter viewer", args);
 }
 
 
@@ -1121,42 +1136,41 @@ void QucsApp::slotAddToProject()
 // -----------------------------------------------------------
 void QucsApp::slotCursorLeft(bool left)
 {
-  int sign = 1;
-  if(left){
-    sign = -1;
-  }
   if(!editText->isHidden()) return;  // for edit of component property ?
 
-  QList<Element*> movingElements;
   Schematic *Doc = (Schematic*)DocumentTab->currentWidget();
-  int markerCount = 0;
-  {
-    // Q3PtrList is long time deprecated and has to be replaced with another
-    // container type, which is not always easy. Here it's simpler to use it
-    // once and go back to QList, because copySelectedElements() uses API
-    // unique to Q3PtrList and to refactor it is a piece of work
-    Q3PtrList<Element> temp_buffer;
-    temp_buffer.setAutoDelete(false);
-    markerCount = Doc->copySelectedElements(&temp_buffer);
-    for (auto* e : temp_buffer) { movingElements.append(e); }
+  const auto selection = Doc->currentSelection();
+
+  const auto totalCount = selection.components.size()
+       + selection.wires.size()
+       + selection.paintings.size()
+       + selection.diagrams.size()
+       + selection.labels.size()
+       + selection.markers.size();
+
+  if (totalCount == selection.markers.size()) {
+      Doc->markerLeftRight(left, selection.markers);
   }
 
-  if((movingElements.count() - markerCount) < 1) {
-    if(markerCount > 0) {  // only move marker if nothing else selected
-      Doc->markerLeftRight(left, &movingElements);
-    } else if(left) {
-      Doc->scrollLeft(Doc->horizontalScrollBar()->singleStep());
-    }else{ // right
-      Doc->scrollRight(Doc->horizontalScrollBar()->singleStep());
-    }
-
+  else if (totalCount == 0) {
+    left
+      ? Doc->scrollLeft(Doc->horizontalScrollBar()->singleStep())
+      : Doc->scrollRight(Doc->horizontalScrollBar()->singleStep());
     Doc->viewport()->update();
     return;
-  } else { // random selection. move all of them
-    view->moveElements(&movingElements, sign*Doc->getGridX(), 0);
-    view->MAx3 = 1;  // sign for moved elements
-    view->endElementMoving(Doc, &movingElements);
   }
+
+  // random selection. move all of them
+  const auto dx = left ? -Doc->getGridX() : Doc->getGridX();
+  const auto mover = [dx](Element* e) { e->moveCenter(dx, 0); };
+  std::ranges::for_each(selection.paintings, mover);
+  std::ranges::for_each(selection.diagrams, mover);
+  std::ranges::for_each(selection.labels, mover);
+  std::ranges::for_each(selection.components, mover);
+  std::ranges::for_each(selection.wires, mover);
+  std::ranges::for_each(selection.nodes, mover);
+  Doc->healAfterKeyboardMutation();
+  Doc->viewport()->update();
 }
 
 // -----------------------------------------------------------
@@ -1203,36 +1217,39 @@ void QucsApp::slotCursorUp(bool up)
     return;
   }
 
-  QList<Element*> movingElements;
   Schematic *Doc = (Schematic*)DocumentTab->currentWidget();
-  int markerCount = 0;
-  {
-    // Q3PtrList is long time deprecated and has to be replaced with another
-    // container type, which is not always easy. Here it's simpler to use it
-    // once and go back to QList, because copySelectedElements() uses API
-    // unique to Q3PtrList and to refactor it is a piece of work
-    Q3PtrList<Element> temp_buffer;
-    temp_buffer.setAutoDelete(false);
-    markerCount = Doc->copySelectedElements(&temp_buffer);
-    for (auto* e : temp_buffer) { movingElements.append(e); }
+  const auto selection = Doc->currentSelection();
+
+  const auto totalCount = selection.components.size()
+       + selection.wires.size()
+       + selection.paintings.size()
+       + selection.diagrams.size()
+       + selection.labels.size()
+       + selection.markers.size();
+
+  if (totalCount == selection.markers.size()) {
+      Doc->markerUpDown(up, selection.markers);
   }
 
-  if((movingElements.count() - markerCount) < 1) { // all selections are markers
-    if(markerCount > 0) {  // only move marker if nothing else selected
-      Doc->markerUpDown(up, &movingElements);
-    } else if(up) { // nothing selected at all
-      Doc->scrollUp(Doc->verticalScrollBar()->singleStep());
-    } else { // down
-      Doc->scrollDown(Doc->verticalScrollBar()->singleStep());
-    }
-
+  else if (totalCount == 0) {
+    up
+      ? Doc->scrollUp(Doc->verticalScrollBar()->singleStep())
+      : Doc->scrollDown(Doc->verticalScrollBar()->singleStep());
     Doc->viewport()->update();
     return;
-  }else{ // some random selection, put it back
-    view->moveElements(&movingElements, 0, ((up)?-1:1) * Doc->getGridY());
-    view->MAx3 = 1;  // sign for moved elements
-    view->endElementMoving(Doc, &movingElements);
   }
+
+  // random selection. move all of them
+  const auto dy = up ? -Doc->getGridY() : Doc->getGridY();
+  const auto mover = [dy](Element* e) { e->moveCenter(0, dy); };
+  std::ranges::for_each(selection.paintings, mover);
+  std::ranges::for_each(selection.diagrams, mover);
+  std::ranges::for_each(selection.labels, mover);
+  std::ranges::for_each(selection.components, mover);
+  std::ranges::for_each(selection.wires, mover);
+  std::ranges::for_each(selection.nodes, mover);
+  Doc->healAfterKeyboardMutation();
+  Doc->viewport()->update();
 }
 
 // -----------------------------------------------------------
@@ -1266,15 +1283,12 @@ void QucsApp::slotApplyCompText()
       const auto new_name{editText->text()};
 
       if (!new_name.isEmpty() && component->Name != new_name) {
-        // TODO: rewrite with std::none_of after replacing Q3PtrList
-        //       with modern container
-        bool is_unique = true;
-        for (auto* other : *Doc->a_Components) {
-          if (other->Name == new_name) {
-            is_unique = false;
-            break;
-          }
-        }
+
+        bool is_unique = std::none_of(
+          Doc->a_Components->begin(),
+          Doc->a_Components->end(),
+          [&new_name](const Component* other) { return other->Name == new_name; }
+        );
 
         if (is_unique) {
           component->Name = new_name;
@@ -1461,7 +1475,7 @@ void QucsApp::slotExportGraphAsCsv()
 }
 
 
-void QucsApp::slotOpenRecent()
+void QucsApp::slotOpenRecentFile()
 {
   QAction *action = qobject_cast<QAction *>(sender());
   if (action) {
@@ -1494,6 +1508,42 @@ void QucsApp::slotClearRecentFiles()
 {
   QucsSettings.RecentDocs.clear();
   slotUpdateRecentFiles();
+}
+
+void QucsApp::slotOpenRecentProject()
+{
+  QAction *recentProjAction = qobject_cast<QAction *>(sender());
+  if (recentProjAction) {
+    openProject(recentProjAction->data().toString());
+  }
+}
+
+void QucsApp::slotUpdateRecentProjects()
+{
+  QMutableStringListIterator it(QucsSettings.RecentProjects);
+  QDir projDir;
+  while(it.hasNext()) {
+    // QDir::cd returns false if directory doesn't exist.
+    if (!projDir.cd(it.next())) {
+        it.remove();
+    }
+  }
+
+  for (int i = 0; i < MaxRecentProjects; ++i) {
+    if (i < QucsSettings.RecentProjects.size()) {
+      projRecentActions[i]->setText(QucsSettings.RecentProjects[i]);
+      projRecentActions[i]->setData(QucsSettings.RecentProjects[i]);
+      projRecentActions[i]->setVisible(true);
+    } else {
+      projRecentActions[i]->setVisible(false);
+    }
+  }
+}
+
+void QucsApp::slotClearRecentProjects()
+{
+  QucsSettings.RecentProjects.clear();
+  updateRecentProjectsList();
 }
 
 /*!

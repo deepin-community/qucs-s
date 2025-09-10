@@ -147,6 +147,16 @@ QucsSettingsDialog::QucsSettingsDialog(QucsApp *parent)
     appSettingsGrid->addWidget(checkFullTraceNames, 6, 1);
     checkFullTraceNames->setChecked(QucsSettings.fullTraceName);
 
+    appSettingsGrid->addWidget(new QLabel(tr("Always prefix the dataset with simulation label:")), 7, 0);
+    alwaysPrefixDataset = new QCheckBox(appSettingsTab);
+    alwaysPrefixDataset->setToolTip(tr("Always use the prefix for dataset, i.e. \"tr1.v(out)\" rather than \"v(out)\""));
+    appSettingsGrid->addWidget(alwaysPrefixDataset, 7, 1);
+    alwaysPrefixDataset->setChecked(QucsSettings.alwaysPrefixDataset);
+
+    appSettingsGrid->addWidget(new QLabel(tr("Flexible wires (requires restart):"), appSettingsTab), 8, 0);
+    allowFlexibleWires = new QCheckBox(appSettingsTab);
+    appSettingsGrid->addWidget(allowFlexibleWires, 8, 1);
+
     t->addTab(appSettingsTab, tr("Settings"));
 
     // ...........................................................
@@ -510,6 +520,7 @@ QucsSettingsDialog::QucsSettingsDialog(QucsApp *parent)
     undoNumEdit->setText(QString::number(QucsSettings.maxUndo));
     editorEdit->setText(QucsSettings.Editor);
     checkWiring->setChecked(QucsSettings.NodeWiring);
+    allowFlexibleWires->setChecked(_settings::Get().item<bool>("AllowFlexibleWires"));
 
     for(int z=LanguageCombo->count()-1; z>=0; z--)
         if(LanguageCombo->itemText(z).section('(',1,1).remove(')') == QucsSettings.Language)
@@ -731,6 +742,8 @@ void QucsSettingsDialog::slotApply()
         changed = true;
     }
 
+    _settings::Get().setItem("AllowFlexibleWires", allowFlexibleWires->isChecked());
+
     QucsSettings.FileTypes.clear();
     for (int row=0; row < fileTypesTableWidget->rowCount(); row++)
     {
@@ -767,6 +780,12 @@ void QucsSettingsDialog::slotApply()
     if (QucsSettings.fullTraceName != checkFullTraceNames->isChecked())
     {
       QucsSettings.fullTraceName = checkFullTraceNames->isChecked();
+      changed = true;
+    }
+
+    if (QucsSettings.alwaysPrefixDataset != alwaysPrefixDataset->isChecked())
+    {
+      QucsSettings.alwaysPrefixDataset = alwaysPrefixDataset->isChecked();
       changed = true;
     }
 
@@ -926,6 +945,7 @@ void QucsSettingsDialog::slotDefaultValues()
     undoNumEdit->setText("20");
     editorEdit->setText(QucsSettings.BinDir + "qucs");
     checkWiring->setChecked(false);
+    allowFlexibleWires->setChecked(_settings::Get().itemDefault<bool>("AllowFlexibleWires"));
     checkLoadFromFutureVersions->setChecked(false);
     checkAntiAliasing->setChecked(false);
     checkTextAntiAliasing->setChecked(true);

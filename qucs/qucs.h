@@ -37,6 +37,7 @@ class SearchDialog;
 class OctaveWindow;
 class MessageDock;
 class ProjectView;
+class ContextMenuTabWidget;
 class TunerDialog;
 class tunerElement;
 class ExternSimDialog;
@@ -90,8 +91,11 @@ class QucsApp : public QMainWindow {
 public:
   QucsApp(bool netlist2Console);
  ~QucsApp();
-  bool closeAllFiles();
-  bool gotoPage(const QString&);   // to load a document
+  bool closeTabsRange(int startTab, int stopTab, int exceptTab = -1);
+  bool closeAllFiles(int exceptTab = -1);
+  bool closeAllLeft(int);
+  bool closeAllRight(int);
+  bool gotoPage(const QString&, bool reloadPage = false);   // to load a document
   QucsDoc *getDoc(int No=-1);
   QucsDoc* findDoc (QString, int * Pos = 0);
   QString fileType (const QString&);
@@ -124,6 +128,10 @@ public slots:
   void slotFileSaveAs();  // save a document under a different filename
   void slotFileSaveAll(); // save all open documents
   void slotFileClose();   // close the actual file
+  void slotFileCloseOthers();   // close all documents except the current one
+  void slotFileCloseAllLeft();  // close all documents to the left of the current one
+  void slotFileCloseAllRight(); // close all documents to the right of the current one
+  void slotFileCloseAll();      //  close all documents
   void slotFileExamples();   // show the examples in a file browser
   void slotHelpTutorial();   // Open a pdf tutorial
   void slotHelpReport();   // Open a pdf report
@@ -192,6 +200,7 @@ private slots:
   void slotSimSettings();
   void slotSaveNetlist();
   void slotSaveCdlNetlist();
+  void slotCdlSettings();
   void slotAfterSpiceSimulation(ExternSimDialog *SimDlg);
   void slotBuildVAModule();
   /*void slotBuildXSPICEIfs(int mode = 0);
@@ -206,7 +215,7 @@ signals:
 
 public:
   MouseActions *view;
-  QTabWidget *DocumentTab;
+  ContextMenuTabWidget *DocumentTab;
   QListWidget *CompComps;
   QTreeWidget *libTreeWidget;
   QTextEdit *CompDescr;
@@ -221,11 +230,12 @@ public:
   QAction *ActionCMenuOpen, *ActionCMenuCopy, *ActionCMenuRename, *ActionCMenuDelete, *ActionCMenuInsert;
 
   QAction *fileNew, *textNew, *symNew, *fileNewDpl, *fileOpen, *fileSave, *fileSaveAs,
-          *fileSaveAll, *fileClose, *fileExamples, *fileSettings, *filePrint, *fileQuit,
+          *fileSaveAll, *fileClose, *fileCloseOthers, *fileCloseAllLeft, *fileCloseAllRight,
+          *fileCloseAll, *fileExamples, *fileSettings, *filePrint, *fileQuit,
           *projNew, *projOpen, *projDel, *projClose, *applSettings, *refreshSchPath,
           *editCut, *editCopy, *magAll, *magSel, *magOne, *magMinus, *filePrintFit, *tune,
           *symEdit, *intoH, *popH, *simulate, *save_netlist, *dpl_sch, *undo, *redo, *dcbias,
-          *saveCdlNetlist;
+          *saveCdlNetlist, *cdlSettings;
 
   QAction *exportAsImage;
 
@@ -277,6 +287,8 @@ private:
   void closeFile(int);
 
   void updateRecentFilesList(QString s);
+  void updateRecentProjectsList(QString pathToProj);
+  void updateRecentProjectsList();
   void successExportMessages(bool ok);
   void fillLibrariesTreeView (void);
   bool populateLibTreeFromDir(const QString &LibDirPath, QList<QTreeWidgetItem *> &topitems, bool relpath = false);
@@ -316,15 +328,20 @@ private:
   void initToolBar();    // creates the toolbars
   void initStatusBar();  // setup the statusbar
 
+  void openFileFromProjectView(const QFileInfo &Info, const QString &note);
+
   QAction *helpAboutApp, *helpAboutQt,
           *viewBrowseDock, *viewOctaveDock;
 
   // menus contain the items of their menubar
-  enum { MaxRecentFiles = 8 };
-  QMenu *fileMenu, *editMenu, *insMenu, *projMenu, *simMenu, *viewMenu,
+  enum { MaxRecentFiles = 8, MaxRecentProjects = 8 };
+  QMenu *fileMenu, *editMenu, *insMenu, *projMenu, *recentProjMenu, *simMenu, *viewMenu,
              *helpMenu, *alignMenu, *toolMenu, *recentFilesMenu, *cmMenu;
   QAction *fileRecentAction[MaxRecentFiles];
   QAction *fileClearRecent;
+
+  QAction *projRecentActions[MaxRecentProjects];
+  QAction *projClearRecent;
 
   // submenus for the PDF documents
   QMenu *helpTechnical, *helpReport, *helpTutorial;
@@ -347,7 +364,7 @@ private:
    ************************************************** */
 
 public:
-  void editFile(const QString&);
+  void editFile(const QString&, bool reloadFile = false);
 
   QAction *insWire, *insLabel, *insGround, *insPort, *insEquation, *magPlus,
           *editRotate, *editMirror, *editMirrorY, *editPaste, *select,
@@ -417,7 +434,8 @@ public slots:
   void slotChangeProps();
   void slotAddToProject();
   void slotApplyCompText();
-  void slotOpenRecent();
+  void slotOpenRecentFile();
+  void slotOpenRecentProject();
   void slotSaveDiagramToGraphicsFile();
   void slotSaveSchematicToGraphicsFile(bool diagram = false);
 
@@ -432,6 +450,8 @@ private slots:
   void slotExportGraphAsCsv();
   void slotUpdateRecentFiles();
   void slotClearRecentFiles();
+  void slotUpdateRecentProjects();
+  void slotClearRecentProjects();
   void slotLoadModule();
   void slotBuildModule();
 
@@ -441,6 +461,7 @@ private:
   void launchTool(const QString&, const QString&,
                   const QStringList& = QStringList(),bool qucs_tool = false); // tool, description and args
   friend class SaveDialog;
+
   QString lastExportFilename;
 };
 
@@ -471,6 +492,26 @@ private:
   QucsSingleton& operator=(const QucsSingleton&) = delete;
   QucsSingleton(QucsSingleton&&) = delete;
   QucsSingleton& operator=(QucsSingleton&&) = delete;
+};
+
+class ContextMenuTabWidget : public QTabWidget
+{
+  Q_OBJECT
+public:
+  ContextMenuTabWidget(QucsApp *parent = 0);
+public slots:
+  void showContextMenu(const QPoint& point);
+private:
+  int contextTabIndex; // index of tab where context menu was opened
+  QucsApp *App; // the main application - parent widget
+private slots:
+  void slotCxMenuClose();
+  void slotCxMenuCloseOthers();
+  void slotCxMenuCloseAll();
+  void slotCxMenuCloseRight();
+  void slotCxMenuCloseLeft();
+  void slotCxMenuCopyPath();
+  void slotCxMenuOpenFolder();
 };
 
 #endif /* QUCS_H */

@@ -24,6 +24,9 @@
 #include "verilogawriter.h"
 #include <QPlainTextEdit>
 #include "paintings/id_text.h"
+#include "component.h"
+#include "node.h"
+#include "schematic.h"
 
 /*!
   \file verilogawriter.cpp
@@ -159,7 +162,7 @@ bool VerilogAwriter::createVA_module(QTextStream &stream, Schematic *sch)
     ports.clear();
     nodes.clear();
 
-    for(Component *pc = sch->a_DocComps.first(); pc != 0; pc = sch->a_DocComps.next()) {
+    for (Component* pc : sch->a_DocComps) {
         if (pc->Model=="Port") { // Find module ports
             QString s = pc->Ports.first()->Connection->Name;
             if (!ports.contains(s)) ports.append(s);
@@ -183,13 +186,11 @@ bool VerilogAwriter::createVA_module(QTextStream &stream, Schematic *sch)
     stream<<QStringLiteral("inout %1;\n").arg(ports.join(", "));
     stream<<QStringLiteral("electrical %1;\n").arg(nodes.join(", "));
 
-    Painting *pi; // Find module parameters
-    for(pi = sch->a_SymbolPaints.first(); pi != 0; pi = sch->a_SymbolPaints.next())
+    for (Painting* pi : sch->a_SymbolPaints)
       if(pi->Name == ".ID ") {
         ID_Text *pid = (ID_Text*)pi;
-        QList<SubParameter *>::const_iterator it;
-        for(it = pid->Parameter.constBegin(); it != pid->Parameter.constEnd(); it++) {
-            QString s = "parameter real " + (*it)->Name + ";\n";
+        for(const auto& sub_param : pid->subParameters) {
+            QString s = "parameter real " + sub_param->name + ";\n";
             stream<<s;
         }
         break;
@@ -197,7 +198,7 @@ bool VerilogAwriter::createVA_module(QTextStream &stream, Schematic *sch)
 
 
     // List all variables
-    for(Component *pc = sch->a_DocComps.first(); pc != 0; pc = sch->a_DocComps.next()) {
+    for( Component* pc : sch->a_DocComps) {
         if (pc->isEquation && pc->isActive) {
             stream<<pc->getVAvariables();
         }
@@ -207,7 +208,7 @@ bool VerilogAwriter::createVA_module(QTextStream &stream, Schematic *sch)
             "@(initial_model)\n"
             "begin \n";
     // Output expressions
-    for(Component *pc = sch->a_DocComps.first(); pc != 0; pc = sch->a_DocComps.next()) {
+    for (Component* pc : sch->a_DocComps) {
         if (pc->isEquation && pc->isActive) {
             stream<<pc->getVAExpressions();
         }
@@ -216,7 +217,7 @@ bool VerilogAwriter::createVA_module(QTextStream &stream, Schematic *sch)
     stream<<"end\n";
 
     // Convert components to current equations.
-    for(Component *pc = sch->a_DocComps.first(); pc != 0; pc = sch->a_DocComps.next()) {
+    for (Component* pc : sch->a_DocComps) {
          stream<<pc->getVerilogACode();
     }
 

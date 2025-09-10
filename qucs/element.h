@@ -143,18 +143,6 @@ struct Text : qucs::DrawingPrimitive {
   double angle() const;
 };
 
-struct Property {
-  Property(const QString& _Name="", const QString& _Value="",
-	   bool _display=false, const QString& Desc="")
-	 : Name(_Name), Value(_Value), display(_display), Description(Desc) {};
-  QString Name, Value;
-  bool    display;   // show on schematic or not ?
-  QString Description;
-  QRect boundingRect() const { return br; };
-  void paint(int x, int y, QPainter* p);
-private:
-  QRect br;
-};
 
 
 // valid values for Element.Type
@@ -177,12 +165,6 @@ private:
 #define isPaintingResize   0x2001
 
 #define isLabel            0x4000
-#define isHWireLabel       0x4020
-#define isVWireLabel       0x4040
-#define isNodeLabel        0x4080
-#define isMovingLabel      0x4001
-#define isHMovingLabel     0x4002
-#define isVMovingLabel     0x4004
 
 #define isDiagram          0x8000
 #define isDiagramResize    0x8001
@@ -197,17 +179,67 @@ private:
   */
 class Element {
 public:
-  Element();
-  virtual ~Element();
+  virtual ~Element() = default;
+  virtual void paintScheme(Schematic *) { /* default no-op */ };
 
-  virtual void paintScheme(Schematic *);
-  virtual void paintScheme(QPainter *);
-  virtual void setCenter(int, int, bool relative=false);
-  virtual void getCenter(int&, int&);
+  /** Rotates element in-place*/
+  virtual bool rotate() noexcept { /* default no-op */ return false; }
 
-  bool isSelected;
-  int  Type;    // whether it is Component, Wire, ...
-  int  cx, cy, x1, y1, x2, y2;  // center and relative boundings
+  /** Rotates element around point.
+      Defined as
+        1. Rotate coordinates of center and move element there
+        2. Rotate element in-place
+  */
+  virtual bool rotate(int rcx, int rcy) noexcept;
+
+  /** Overload of rotate around point */
+  virtual bool rotate(const QPoint& center) noexcept;
+
+  /** Mirrors element vertically in-place */
+  virtual bool mirrorX() noexcept { /* default no-op */ return false; }
+
+  /** Mirrors element horizontally in-place */
+  virtual bool mirrorY() noexcept { /* default no-op */ return false; }
+
+  /** Mirrors element vertically around axis.
+      Defined as
+        1. Mirror coordinate Y of center and move element there
+        2. Mirror in-place
+  */
+  virtual bool mirrorX(int axis) noexcept;
+
+  /** Mirrors element horizontally around axis.
+      Defined as
+        1. Mirror coordinate Y of center and move element there
+        2. Mirror in-place
+  */
+  virtual bool mirrorY(int axis) noexcept;
+
+  /** Moves elements so that its center is at (x,y) after move */
+  virtual bool moveCenterTo(int x, int y) noexcept;
+
+  /** Overload of moveCenterTo */
+  virtual bool moveCenterTo(const QPoint& p) noexcept;
+
+  /** Moves element center relatively to current location */
+  virtual bool moveCenter(int dx, int dy) noexcept;
+
+  /** Returns the tightest rectangle which can fit the entire element */
+  virtual QRect boundingRect() const noexcept;
+
+  /** Coordinates of center */
+  virtual QPoint center() const noexcept;
+
+  bool isSelected = false;
+  int  Type = isDummyElement;    // whether it is Component, Wire, ...
+
+  // center and relative boundings
+  int cx = 0;
+  int cy = 0;
+  int x1 = 0;
+  int y1 = 0;
+  int x2 = 0;
+  int y2 = 0;
 };
 
 #endif

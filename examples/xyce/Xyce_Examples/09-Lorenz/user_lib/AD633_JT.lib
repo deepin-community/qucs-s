@@ -1,5 +1,5 @@
 ***********************************************************************************
-**** SPICE MODELING by JIM THOMPSON, http://www.analog-innovations.com/ Â© 2014 ****
+**** SPICE MODELING by JIM THOMPSON, http://www.analog-innovations.com/ © 2014 ****
 ***********************************************************************************
 ***** Rudimentary Behavioral Model of Analog Devices AD633 Analog Multiplier ******
 ***** Noise, CMRR and Feed-Thru are not modeled

@@ -71,7 +71,7 @@ Element* SP_Sim::info(QString& Name, char* &BitmapFile, bool getNewOne)
   return 0;
 }
 
-void SP_Sim::recreate(Schematic*)
+void SP_Sim::recreate()
 {
   if((Props.at(0)->Value == "list") || (Props.at(0)->Value == "const")) {
     // Call them "Symbol" to omit them in the netlist.
@@ -91,9 +91,8 @@ void SP_Sim::recreate(Schematic*)
 int SP_Sim::getSPortsNumber()
 {
     int p_num = 0;
-    if (containingSchematic != NULL) {
-        auto comps = containingSchematic->a_DocComps;
-        for(Component *pc = comps.first(); pc != 0; pc = comps.next()) {
+    if (containingSchematic != nullptr) {
+        for (Component *pc : containingSchematic->a_DocComps) {
             if (pc->Model == "Pac") p_num++;
         }
         return  p_num;

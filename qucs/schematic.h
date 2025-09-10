@@ -27,19 +27,12 @@
 #  define prechecked_cast dynamic_cast
 #endif
 
-#include "wire.h"
-#include "node.h"
 #include "qucsdoc.h"
-#include "diagrams/diagram.h"
-#include "paintings/painting.h"
-#include "components/component.h"
 #include "wire_planner.h"
 
-#include "qt3_compat/qt_compat.h"
 #include "qt3_compat/q3scrollview.h"
 #include <QVector>
 #include <QStringList>
-#include <QFileInfo>
 
 class QTextStream;
 class QTextEdit;
@@ -51,6 +44,16 @@ class QWheelEvent;
 class QMouseEvent;
 class QDragEnterEvent;
 class QPainter;
+
+class Element;
+class Component;
+class Conductor;
+class Diagram;
+class Marker;
+class Node;
+class Painting;
+class Wire;
+class WireLabel;
 
 // digital signal data
 struct DigSignal {
@@ -145,11 +148,11 @@ public:
     @param viewportRelative  tells if coordinates are absolute or relative to viewport
   */
   void zoomAroundPoint(double scaleChange, QPoint coords, bool viewportRelative);
-  float zoomBy(float);
+  double zoomBy(double);
   void  showAll();
   void zoomToSelection();
   void  showNoZoom();
-  void  enlargeView(int, int, int, int);
+  void  enlargeView(const Element* e);
   void  switchPaintMode();
   int   adjustPortNumbers();
   int   orderSymbolPorts();
@@ -188,7 +191,7 @@ public:
 
   void    cut();
   void    copy();
-  bool    paste(QTextStream*, QList<Element*>*);
+  bool    paste(QTextStream*, std::list<Element*>*);
   bool    load();
   int     save();
   int     saveSymbolCpp (void);
@@ -236,18 +239,18 @@ public:
 
   // The pointers points to the current lists, either to the schematic
   // elements "Doc..." or to the symbol elements "SymbolPaints".
-  Q3PtrList<Wire> *a_Wires;
-  Q3PtrList<Wire> a_DocWires;
-  Q3PtrList<Node>* a_Nodes;
-  Q3PtrList<Node> a_DocNodes;
-  Q3PtrList<Diagram>* a_Diagrams;
-  Q3PtrList<Diagram> a_DocDiags;
-  Q3PtrList<Painting>* a_Paintings;
-  Q3PtrList<Painting> a_DocPaints;
-  Q3PtrList<Component>* a_Components;
-  Q3PtrList<Component> a_DocComps;
+  std::list<Wire*> *a_Wires;
+  std::list<Wire*> a_DocWires;
+  std::list<Node*>* a_Nodes;
+  std::list<Node*> a_DocNodes;
+  std::list<Diagram*>* a_Diagrams;
+  std::list<Diagram*> a_DocDiags;
+  std::list<Painting*>* a_Paintings;
+  std::list<Painting*> a_DocPaints;
+  std::list<Component*>* a_Components;
+  std::list<Component*> a_DocComps;
 
-  Q3PtrList<Painting> a_SymbolPaints;  // symbol definition for subcircuit
+  std::list<Painting*> a_SymbolPaints;  // symbol definition for subcircuit
 
 private:
   QList<PostedPaintEvent> a_PostedPaintEvents;
@@ -280,20 +283,19 @@ private:
 
   // Two of those data sets are needed for Schematic and for symbol.
   // Which one is in "tmp..." depends on "symbolMode".
-  float a_tmpScale;
+  double a_tmpScale;
   int a_tmpViewX1;
   int a_tmpViewY1;
   int a_tmpViewX2;
   int a_tmpViewY2;
-  int a_tmpUsedX1;
-  int a_tmpUsedY1;
-  int a_tmpUsedX2;
-  int a_tmpUsedY2;
+  QRect a_tmpUsedArea;
 
   int a_undoActionIdx;
   QVector<QString *> a_undoAction;
   int a_undoSymbolIdx;
   QVector<QString *> a_undoSymbol;    // undo stack for circuit symbol
+
+  bool isImageFilePath(const QString& path); // Detect if a file is an image
 
 signals:
   void signalCursorPosChanged(int, int, QString);
@@ -323,15 +325,10 @@ protected slots:
   void slotScrollRight();
 
 private:
-  // Variables Used* hold the coordinates of top-left and bottom-right corners
-  // of a smallest rectangle which can fit all elements of the schematic.
+  // Describes the area occupied by all elements of schematic, i.e. it is
+  // the union of bounding rectangles of all elements.
   // This rectangle exists in the same coordinate system as View*-rectangle
-  int a_UsedX1;
-  int a_UsedY1;
-  int a_UsedX2;
-  int a_UsedY2;
-
-  void sizeOfAll(int&, int&, int&, int&);
+  QRect a_UsedArea;
 
   // Viewport-realative coordinates of the cursor between mouse movements.
   // Used in "pan with mouse" feature.
@@ -340,16 +337,6 @@ private:
   bool a_dragIsOkay;
   /*! \brief hold system-independent information about a schematic file */
   QFileInfo a_FileInfo;
-
-  /**
-    Minimum scale at which schematic could be drawn.
-  */
-  static constexpr double a_minScale = 0.1;
-
-  /**
-    Maximum scale at which schematic could be drawn.
-  */
-  static constexpr double a_maxScale = 10.0;
 
   /**
     Returns a rectangle which describes the model plane of the schematic.
@@ -362,12 +349,6 @@ private:
     width and height are equal to viewport's width and height.
   */
   QRect viewportRect();
-
-  /**
-    If given value violates lower or upper scale limit, then returns
-    the limit value, original value otherwise.
-  */
-  static double clipScale(double);
 
   /**
     Tells whether the model should be rerendered. Model should be rendered
@@ -431,7 +412,6 @@ private:
   void drawPostPaintEvents(QPainter* painter);
   void paintFrame(QPainter* painter);
   void drawGrid(QPainter* painter);
-  void relativeRotation(int &x, int &y, int comX, int comY, int posX, int posY);
 
 /* ********************************************************************
    *****  The following methods are in the file                   *****
@@ -441,36 +421,38 @@ private:
    ******************************************************************** */
 
 public:
-  Node* insertNode(int, int, Element*);
+  Node* provideNode(int, int);
+  Node* provideNode(const QPoint& p) { return provideNode(p.x(), p.y()); }
   Node* selectedNode(int, int);
 
   qucs_s::wire::Planner a_wirePlanner;
   std::pair<bool,Node*> connectWithWire(const QPoint& a, const QPoint& b) noexcept;
+  std::pair<bool,Node*> connectWithWire(const QPoint& a, const QPoint& b, bool optimize, qucs_s::wire::Planner::PlanType planType) noexcept;
   void showEphemeralWire(const QPoint& a, const QPoint& b) noexcept;
+  bool  optimizeWires();
+  std::pair<bool,Node*> installWire(Wire* wire);
+  void displayMutations();
 
-  int   insertWireNode1(Wire*);
-  bool  connectHWires1(Wire*);
-  bool  connectVWires1(Wire*);
-  int   insertWireNode2(Wire*);
-  bool  connectHWires2(Wire*);
-  bool  connectVWires2(Wire*);
-  int   insertWire(Wire*);
-  void  selectWireLine(Element*, Node*, bool);
+  struct HealingParams;
+  bool heal(const HealingParams* params);
+  bool healAfterMousyMutation();
+  bool healAfterKeyboardMutation();
+
+  void dumbConnectWithWire(const QPoint& a, const QPoint& b) noexcept;
+
+  void  selectWireLine(Wire*, Node*, bool);
   Wire* selectedWire(int, int);
   Wire* splitWire(Wire*, Node*);
-  bool  oneTwoWires(Node*);
-  void  deleteWire(Wire*);
+  void  deleteWire(Wire*, bool remove_orphans=true);
 
   Marker* setMarker(int, int);
-  void    markerLeftRight(bool, QList<Element*>*);
-  void    markerUpDown(bool, QList<Element*>*);
+  void    markerLeftRight(bool, const std::vector<Marker*>& markers);
+  void    markerUpDown(bool, const std::vector<Marker*>& markers);
 
   Element* selectElement(float, float, bool, int *index=0);
   void     deselectElements(Element*) const;
   int      selectElements(const QRect&, bool, bool) const;
   void     selectMarkers() const;
-  void     newMovingWires(Q3PtrList<Element>*, Node*, int) const;
-  int      copySelectedElements(Q3PtrList<Element>*);
   bool     deleteElements();
   bool     aligning(int);
   bool     distributeHorizontal();
@@ -483,31 +465,21 @@ public:
   void       activateCompsWithinRect(int, int, int, int);
   bool       activateSpecifiedComponent(int, int);
   bool       activateSelectedComponents();
-  void       setCompPorts(Component*);
   Component* selectCompText(int, int, int&, int&) const;
   Component* searchSelSubcircuit();
-  Component* selectedComponent(int, int);
   void       deleteComp(Component*);
+  void       detachComp(Component*);
   Component* getComponentByName(const QString& compname) const;
 
   void     oneLabel(Node*);
   int      placeNodeLabel(WireLabel*);
   Element* getWireLabel(Node*);
-  void     insertNodeLabel(WireLabel*);
-  void     copyLabels(int&, int&, int&, int&, QList<Element *> *);
 
   Painting* selectedPainting(float, float);
-  void      copyPaintings(int&, int&, int&, int&, QList<Element *> *);
 
 
 private:
   void insertComponentNodes(Component*, bool);
-  int  copyWires(int&, int&, int&, int&, QList<Element *> *);
-  int  copyComponents(int&, int&, int&, int&, QList<Element *> *);
-  void copyComponents2(int&, int&, int&, int&, QList<Element *> *);
-  bool copyComps2WiresPaints(int&, int&, int&, int&, QList<Element *> *);
-  int  copyElements(int&, int&, int&, int&, QList<Element *> *);
-
 
 /* ********************************************************************
    *****  The following methods are in the file                   *****
@@ -539,15 +511,15 @@ private:
 
   bool loadProperties(QTextStream*);
   void simpleInsertComponent(Component*);
-  bool loadComponents(QTextStream*, QList<Component*> *List=0);
+  bool loadComponents(QTextStream*, std::list<Component*> *List=0);
   void simpleInsertWire(Wire*);
-  bool loadWires(QTextStream*, QList<Element*> *List=0);
-  bool loadDiagrams(QTextStream*, QList<Diagram*>*);
-  bool loadPaintings(QTextStream*, QList<Painting*>*);
+  bool loadWires(QTextStream*, std::list<Element*> *List=0);
+  bool loadDiagrams(QTextStream*, std::list<Diagram*>*);
+  bool loadPaintings(QTextStream*, std::list<Painting*>*);
   bool loadIntoNothing(QTextStream*);
 
   QString createClipboardFile();
-  bool    pasteFromClipboard(QTextStream *, QList<Element*>*);
+  bool    pasteFromClipboard(QTextStream *, std::list<Element*>*);
 
   QString createUndoString(char);
   bool    rebuild(QString *);

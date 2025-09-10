@@ -41,14 +41,13 @@
 #include <QHBoxLayout>
 #include <QStackedWidget>
 #include <QGroupBox>
-#include <QDebug>
 #include <QStringList>
 
 #include "librarydialog.h"
 #include "main.h"
-#include "schematic.h"
+#include "painting.h"
 #include "extsimkernels/abstractspicekernel.h"
-//#include "extsimkernels/xspice_cmbuilder.h"
+#include "extsimkernels/spicecompat.h"
 
 extern SubMap FileList;
 
@@ -246,7 +245,7 @@ void LibraryDialog::slotCreateNext()
   int count=0;
   for(int i = 0; i < subcirFileList->count(); i++) {
       auto itm = subcirFileList->item(i);
-      if (itm == NULL) continue;
+      if (itm == nullptr) continue;
       if (itm->checkState() == Qt::Checked) {
           SelectedNames.append(itm->text());
           Descriptions.append("");
@@ -510,7 +509,7 @@ void LibraryDialog::slotSave()
                                 "Check these components: %2 \n")
                     .arg(Doc->getDocName()).arg(err_lst.join("; ")));
         }
-        kern->createSubNetlsit(ts,true);
+        kern->createSubNetlist(ts,true);
         intoStream(Stream, tmp, "Spice");
 
         QStringList libs = kern->collectSpiceLibraryFiles(Doc);
@@ -606,8 +605,7 @@ void LibraryDialog::slotSave()
 
       Stream << "  <Symbol>\n";
       Doc->createSubcircuitSymbol();
-      Painting *pp;
-      for(pp = Doc->a_SymbolPaints.first(); pp != 0; pp = Doc->a_SymbolPaints.next())
+      for(Painting* pp : Doc->a_SymbolPaints)
         Stream << "    <" << pp->save() << ">\n";
 
       Stream << "  </Symbol>\n"
