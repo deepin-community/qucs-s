@@ -21,6 +21,7 @@ Copyright (C) 2014 by Guilherme Brondani Torri <guitorri@gmail.com>
 #include <QAction>
 #include <QMessageBox>
 #include <QTextStream>
+#include <qpalette.h>
 
 #include "main.h"
 #include "misc.h"
@@ -58,6 +59,12 @@ TextDoc::TextDoc(QucsApp *App_, const QString& Name_) : QPlainTextEdit(), QucsDo
 
   setWordWrapMode(QTextOption::NoWrap);
   misc::setWidgetBackgroundColor(viewport(),QucsSettings.BGColor);
+  // Set black text if light background
+  QPalette p = palette();
+  if(QucsSettings.BGColor.value() > 127) {
+    p.setColor(QPalette::Text, Qt::black);
+    setPalette(p);
+  }
   connect(this, SIGNAL(textChanged()), SLOT(slotSetChanged()));
   connect(this, SIGNAL(cursorPositionChanged()),
           SLOT(slotCursorPosChanged()));
@@ -370,6 +377,9 @@ bool TextDoc::load ()
 
   QTextStream stream (&file);
   insertPlainText(stream.readAll());
+  // Store timestamp
+  QFileInfo fileInfo(a_DocName);
+  lastLoadModTime = fileInfo.lastModified();
   document()->setModified(false);
   slotSetChanged ();
   file.close ();
@@ -378,6 +388,16 @@ bool TextDoc::load ()
   a_SimOpenDpl = simulation ? true : false;
   refreshLanguage();
   return true;
+}
+
+/*!
+ * \brief TextDoc::clears and re-loads a text document
+ * \return true/false if the document was opened with success
+ */
+bool TextDoc::reload()
+{
+  clear();
+  return load();
 }
 
 
@@ -415,7 +435,7 @@ int TextDoc::save ()
  * \brief Zooms the document in and out. Note, the zoom amount is fixed by Qt and the
  *        amount passed is ignored.
  */
-float TextDoc::zoomBy(float zoom)
+double TextDoc::zoomBy(double zoom)
 {
   // qucs_actions defines zooming in as > 1.
   if (zoom > 1.0) {
@@ -606,4 +626,15 @@ void TextDoc::refreshLanguage()
     this->setLanguage(a_DocName);
     syntaxHighlight->setLanguage(language);
     syntaxHighlight->setDocument(document());
+}
+
+// Returns true if file on disk has a lastModified timestamp newer than the object's
+// last load modified time
+bool TextDoc::hasFileChangedOnDisk() const
+{
+  QFileInfo fileInfo(a_DocName);
+  if (!fileInfo.exists()) {
+    return true; // File is removed -> has changed
+  }
+  return fileInfo.lastModified() > lastLoadModTime;
 }

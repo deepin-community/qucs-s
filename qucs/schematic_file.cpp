@@ -24,7 +24,6 @@
 #include <QDir>
 #include <QStringList>
 #include <QPlainTextEdit>
-#include <qt3_compat/q3ptrlist.h>
 #include <QTextStream>
 #include <QList>
 #include <QProcess>
@@ -32,6 +31,7 @@
 
 #include "main.h"
 #include "node.h"
+#include "wire.h"
 #include "schematic.h"
 #include "diagrams/diagrams.h"
 #include "paintings/paintings.h"
@@ -61,65 +61,45 @@ extern void osdi_log_skip(void *handle, char* msg, uint32_t lvl)
   (void)lvl;
 }
 
-namespace shim {
-  // Historically Qucs-S has been using Q3PtrList a lot and it's not so easy
-  // to replace it. The goal of this shim is to help with transition to new
-  // container type.
-  // Wherever possible a "barrier" is made by replacing Q3PtrList with QList
-  // to stop its propagating. QList is passed instead of original Q3PtrList
-  // and then its contents are copied back to Q3PtrList as if it was passed
-  // in the first place
-template <typename T>
-void copyToQ3PtrList(const QList<T*>& src, Q3PtrList<T>& dst) {
-  for (auto* item : src) {
-    dst.append(item);
-  }
-}
-} // namespace shim
-
 // -------------------------------------------------------------
 // Creates a Qucs file format (without document properties) in the returning
 // string. This is used to copy the selected elements into the clipboard.
 QString Schematic::createClipboardFile()
 {
   int z=0;  // counts selected elements
-  Wire *pw;
-  Diagram *pd;
-  Painting *pp;
-  Component *pc;
 
   QString s("<Qucs Schematic " PACKAGE_VERSION ">\n");
 
   // Build element document.
   s += "<Components>\n";
-  for(pc = a_Components->first(); pc != 0; pc = a_Components->next())
+  for(Component* pc : *a_Components)
     if(pc->isSelected) {
       s += pc->save()+"\n";  z++; }
   s += "</Components>\n";
 
   s += "<Wires>\n";
-  for(pw = a_Wires->first(); pw != 0; pw = a_Wires->next())
+  for(Wire* pw : *a_Wires)
     if(pw->isSelected) {
       z++;
-      if(pw->Label) if(!pw->Label->isSelected) {
+      if(pw->hasLabel()) if(!pw->label()->isSelected) {
         s += pw->save().section('"', 0, 0)+"\"\" 0 0 0>\n";
         continue;
       }
       s += pw->save()+"\n";
     }
-  for(Node *pn = a_Nodes->first(); pn != 0; pn = a_Nodes->next())
-    if(pn->Label) if(pn->Label->isSelected) {
-      s += pn->Label->save()+"\n";  z++; }
+  for(Node *pn : *a_Nodes)
+    if(pn->hasLabel()) if(pn->label()->isSelected) {
+      s += pn->label()->save()+"\n";  z++; }
   s += "</Wires>\n";
 
   s += "<Diagrams>\n";
-  for(pd = a_Diagrams->first(); pd != 0; pd = a_Diagrams->next())
+  for(Diagram* pd : *a_Diagrams)
     if(pd->isSelected) {
       s += pd->save()+"\n";  z++; }
   s += "</Diagrams>\n";
 
   s += "<Paintings>\n";
-  for(pp = a_Paintings->first(); pp != 0; pp = a_Paintings->next())
+  for(Painting* pp : *a_Paintings)
     if(pp->isSelected)
       if ((a_isSymbolOnly && pp->Name.startsWith(".PortSym")) || pp->Name.at(0) != '.') {  // subcircuit specific -> do not copy
         s += "<"+pp->save()+">\n";  z++; }
@@ -140,29 +120,125 @@ bool Schematic::loadIntoNothing(QTextStream *stream)
     if(Line.at(0) == '<') if(Line.at(1) == '/') return true;
   }
 
-  QMessageBox::critical(0, QObject::tr("Error"),
+  QMessageBox::critical(nullptr, QObject::tr("Error"),
   QObject::tr("Format Error:\n'Painting' field is not closed!"));
   return false;
 }
 
 // -------------------------------------------------------------
 // Paste from clipboard.
-bool Schematic::pasteFromClipboard(QTextStream *stream, QList<Element*> *pe)
+bool Schematic::pasteFromClipboard(QTextStream *stream, std::list<Element*> *pe)
 {
-  QString Line;
+  // First, check if clipboard contains image data or file path
+  QClipboard* clipboard = QApplication::clipboard();
+  const QMimeData* mimeData = clipboard->mimeData();
 
+  // Check for image data first
+  if (mimeData->hasImage()) {
+    QImage clipboardImage = clipboard->image();
+    if (!clipboardImage.isNull()) {
+      // Create an ImagePainting with the clipboard image
+      ImagePainting* imagePainting = new ImagePainting();
+
+      // Convert QImage to QPixmap and set it
+      QPixmap pixmap = QPixmap::fromImage(clipboardImage);
+
+      // Set position
+      int defaultX = 0;
+      int defaultY = 0;
+      imagePainting->x1 = defaultX;
+      imagePainting->y1 = defaultY;
+      imagePainting->x2 = defaultX + clipboardImage.width();
+      imagePainting->y2 = defaultY + clipboardImage.height();
+
+      // Set the image data directly in the ImagePainting
+      imagePainting->setImageFromPixmap(pixmap);
+
+      // Add to the elements list
+      pe->push_back(imagePainting);
+
+      return true;
+    }
+  }
+
+  // Check for text that might be a file path to an image
+  if (mimeData->hasText()) {
+    QString clipboardText = clipboard->text().trimmed();
+
+    // Check if the text looks like a file path and if it's an image file
+    if (!clipboardText.isEmpty() && isImageFilePath(clipboardText)) {
+      QPixmap testPixmap;
+      if (testPixmap.load(clipboardText)) {
+        // Successfully loaded image from path
+        ImagePainting* imagePainting = new ImagePainting();
+
+        // Set position
+        int defaultX = 0;
+        int defaultY = 0;
+        imagePainting->x1 = defaultX;
+        imagePainting->y1 = defaultY;
+        imagePainting->x2 = defaultX + testPixmap.width();
+        imagePainting->y2 = defaultY + testPixmap.height();
+
+        // Set the image from file path
+        imagePainting->setImageFromPath(clipboardText);
+
+        // Add to the elements list
+        pe->push_back(imagePainting);
+
+        return true;
+      }
+    }
+  }
+
+  // Check for file URLs (drag and drop from file manager)
+  if (mimeData->hasUrls()) {
+    QList<QUrl> urls = mimeData->urls();
+    for (const QUrl& url : urls) {
+      if (url.isLocalFile()) {
+        QString filePath = url.toLocalFile();
+        if (isImageFilePath(filePath)) {
+          QPixmap testPixmap;
+          if (testPixmap.load(filePath)) {
+            // Successfully loaded image from file
+            ImagePainting* imagePainting = new ImagePainting();
+
+            // Set position (offset multiple images if there are several)
+            int defaultX = 100 + (pe->size() * 20); // Offset each image
+            int defaultY = 100 + (pe->size() * 20);
+            imagePainting->x1 = defaultX;
+            imagePainting->y1 = defaultY;
+            imagePainting->x2 = defaultX + testPixmap.width();
+            imagePainting->y2 = defaultY + testPixmap.height();
+
+            // Set the image from file path
+            imagePainting->setImageFromPath(filePath);
+
+            // Add to the elements list
+            pe->push_back(imagePainting);
+          }
+        }
+      }
+    }
+
+    // If we processed any image files, return true
+    if (!pe->empty()) {
+      return true;
+    }
+  }
+
+  // If no image in clipboard, proceed with normal text-based clipboard processing
+  QString Line;
   Line = stream->readLine();
   if(Line.left(16) != "<Qucs Schematic ")   // wrong file type ?
     return false;
-
   QString s = PACKAGE_VERSION;
   Line = Line.mid(16, Line.length()-17);
   if(Line != s) {  // wrong version number ?
-    QMessageBox::critical(0, QObject::tr("Error"),
+    QMessageBox::critical(nullptr, QObject::tr("Error"),
                  QObject::tr("Wrong document version: ")+Line);
     return false;
   }
-
   // read content in symbol edit mode *************************
   if(a_symbolMode) {
     while(!stream->atEnd()) {
@@ -177,40 +253,51 @@ bool Schematic::pasteFromClipboard(QTextStream *stream, QList<Element*> *pe)
         if(!loadIntoNothing(stream)) return false; }
       else
       if(Line == "<Paintings>") {
-        if(!loadPaintings(stream, (QList<Painting*>*)pe)) return false; }
+        if(!loadPaintings(stream, (std::list<Painting*>*)pe)) return false; }
       else {
-        QMessageBox::critical(0, QObject::tr("Error"),
+        QMessageBox::critical(nullptr, QObject::tr("Error"),
         QObject::tr("Clipboard Format Error:\nUnknown field!"));
         return false;
       }
     }
-
     return true;
   }
-
   // read content in schematic edit mode *************************
   while(!stream->atEnd()) {
     Line = stream->readLine();
     if(Line == "<Components>") {
-      if(!loadComponents(stream, (QList<Component*>*)pe)) return false; }
+      if(!loadComponents(stream, (std::list<Component*>*)pe)) return false; }
     else
     if(Line == "<Wires>") {
       if(!loadWires(stream, pe)) return false; }
     else
     if(Line == "<Diagrams>") {
-      if(!loadDiagrams(stream, (QList<Diagram*>*)pe)) return false; }
+      if(!loadDiagrams(stream, (std::list<Diagram*>*)pe)) return false; }
     else
     if(Line == "<Paintings>") {
-      if(!loadPaintings(stream, (QList<Painting*>*)pe)) return false; }
+      if(!loadPaintings(stream, (std::list<Painting*>*)pe)) return false; }
     else {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Clipboard Format Error:\nUnknown field!"));
       return false;
     }
   }
-
   return true;
 }
+
+bool Schematic::isImageFilePath(const QString& path) {
+  if (path.isEmpty()) return false;
+
+  QFileInfo fileInfo(path);
+  if (!fileInfo.exists() || !fileInfo.isFile()) {
+    return false;
+  }
+
+  // Use QImageReader to check if the file format is supported
+  QImageReader reader(path);
+  return reader.canRead();
+}
+
 
 // -------------------------------------------------------------
 int Schematic::saveSymbolCpp (void)
@@ -220,7 +307,7 @@ int Schematic::saveSymbolCpp (void)
   QFile file (cppfile);
 
   if (!file.open (QIODevice::WriteOnly)) {
-    QMessageBox::critical (0, QObject::tr("Error"),
+    QMessageBox::critical (nullptr, QObject::tr("Error"),
     QObject::tr("Cannot save C++ file \"%1\"!").arg(cppfile));
     return -1;
   }
@@ -232,12 +319,11 @@ int Schematic::saveSymbolCpp (void)
   int ymin = INT_MAX;
   int xmax = INT_MIN;
   int ymax = INT_MIN;
-  int x1, y1, x2, y2;
+  int x1, y1;
   int maxNum = 0;
-  Painting * pp;
 
   stream << "  // symbol drawing code\n";
-  for (pp = a_SymbolPaints.first (); pp != 0; pp = a_SymbolPaints.next ()) {
+  for (auto* pp : a_SymbolPaints) {
     if (pp->Name == ".ID ") continue;
     if (pp->Name == ".PortSym ") {
       if (((PortSymbol*)pp)->numberStr.toInt() > maxNum)
@@ -250,17 +336,18 @@ int Schematic::saveSymbolCpp (void)
       if (y1 > ymax) ymax = y1;
       continue;
     }
-    pp->Bounding (x1, y1, x2, y2);
-    if (x1 < xmin) xmin = x1;
-    if (x2 > xmax) xmax = x2;
-    if (y1 < ymin) ymin = y1;
-    if (y2 > ymax) ymax = y2;
+    auto br = pp->boundingRect();
+    xmin = std::min(xmin, br.left());
+    xmax = std::max(xmax, br.left() + br.width());
+    ymin = std::min(ymin, br.top());
+    ymax = std::max(ymax, br.top() + br.height());
+
     stream << "  " << pp->saveCpp () << "\n";
   }
 
   stream << "\n  // terminal definitions\n";
   for (int i = 1; i <= maxNum; i++) {
-    for (pp = a_SymbolPaints.first (); pp != 0; pp = a_SymbolPaints.next ()) {
+    for (auto* pp : a_SymbolPaints) {
       if (pp->Name == ".PortSym ") {
         if (((PortSymbol*)pp)->numberStr.toInt() == i) {
           stream << "  " << pp->saveCpp () << "\n";
@@ -274,7 +361,7 @@ int Schematic::saveSymbolCpp (void)
     << "  x2 = " << xmax << "; " << "  y2 = " << ymax << ";\n";
 
   stream << "\n  // property text position\n";
-  for (pp = a_SymbolPaints.first (); pp != 0; pp = a_SymbolPaints.next ())
+  for (auto* pp : a_SymbolPaints)
     if (pp->Name == ".ID ")
       stream << "  " << pp->saveCpp () << "\n";
 
@@ -294,7 +381,7 @@ int Schematic::savePropsJSON()
 
   QFile vafile(vafilename);
   if (!vafile.open (QIODevice::ReadOnly)) {
-    QMessageBox::critical (0, QObject::tr("Error"),
+    QMessageBox::critical (nullptr, QObject::tr("Error"),
                           QObject::tr("Cannot open Verilog-A file \"%1\"!").arg(vafilename));
     return -1;
   }
@@ -332,7 +419,7 @@ int Schematic::savePropsJSON()
     QFile file (jsonfile);
 
     if (!file.open (QIODevice::WriteOnly)) {
-      QMessageBox::critical (0, QObject::tr("Error"),
+      QMessageBox::critical (nullptr, QObject::tr("Error"),
                             QObject::tr("Cannot save JSON props file \"%1\"!").arg(jsonfile));
       return -1;
     }
@@ -369,7 +456,7 @@ int Schematic::savePropsJSON()
 
     QLibrary osdilib (osdifile);
     if (!osdilib.load()){
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
                             QObject::tr("No valid osdi file. Re-compile verilog-a file first!"));
       return -1;
     }
@@ -452,7 +539,7 @@ int Schematic::savePropsJSON()
     QFile file (jsonfile);
 
     if (!file.open (QIODevice::WriteOnly)) {
-      QMessageBox::critical (0, QObject::tr("Error"),
+      QMessageBox::critical (nullptr, QObject::tr("Error"),
                             QObject::tr("Cannot save JSON props file \"%1\"!").arg(jsonfile));
       return -1;
     }
@@ -498,7 +585,7 @@ int Schematic::saveSymbolJSON()
   QFile file (jsonfile);
 
   if (!file.open (QIODevice::WriteOnly)) {
-    QMessageBox::critical (0, QObject::tr("Error"),
+    QMessageBox::critical (nullptr, QObject::tr("Error"),
 		   QObject::tr("Cannot save JSON symbol file \"%1\"!").arg(jsonfile));
     return -1;
   }
@@ -510,16 +597,15 @@ int Schematic::saveSymbolJSON()
   int ymin = INT_MAX;
   int xmax = INT_MIN;
   int ymax = INT_MIN;
-  int x1, y1, x2, y2;
+  int x1, y1;
   int maxNum = 0;
-  Painting * pp;
 
   stream << "{\n";
 
   stream << "\"paintings\" : [\n";
 
   // symbol drawing code"
-  for (pp = a_SymbolPaints.first (); pp != 0; pp = a_SymbolPaints.next ()) {
+  for (auto* pp : a_SymbolPaints) {
     if (pp->Name == ".ID ") continue;
     if (pp->Name == ".PortSym ") {
       if (((PortSymbol*)pp)->numberStr.toInt() > maxNum)
@@ -532,18 +618,18 @@ int Schematic::saveSymbolJSON()
       if (y1 > ymax) ymax = y1;
       continue;
     }
-    pp->Bounding (x1, y1, x2, y2);
-    if (x1 < xmin) xmin = x1;
-    if (x2 > xmax) xmax = x2;
-    if (y1 < ymin) ymin = y1;
-    if (y2 > ymax) ymax = y2;
+    auto br = pp->boundingRect();
+    xmin = std::min(xmin, br.left());
+    xmax = std::max(xmax, br.left() + br.width());
+    ymin = std::min(ymin, br.top());
+    ymax = std::max(ymax, br.top() + br.height());
     stream << "  " << pp->saveJSON() << "\n";
   }
 
   // terminal definitions
   //stream << "terminal \n";
   for (int i = 1; i <= maxNum; i++) {
-    for (pp = a_SymbolPaints.first (); pp != 0; pp = a_SymbolPaints.next ()) {
+    for (auto* pp : a_SymbolPaints) {
       if (pp->Name == ".PortSym ") {
         if (((PortSymbol*)pp)->numberStr.toInt() == i) {
           stream << "  " << pp->saveJSON () << "\n";
@@ -560,7 +646,7 @@ int Schematic::saveSymbolJSON()
     << "  \"x2\" : " << xmax << ",\n" << "  \"y2\" : " << ymax << ",\n";
 
   // property text position
-  for (pp = a_SymbolPaints.first (); pp != 0; pp = a_SymbolPaints.next ())
+  for (auto* pp : a_SymbolPaints)
     if (pp->Name == ".ID ")
       stream << "  " << pp->saveJSON () << "\n";
 
@@ -578,7 +664,7 @@ int Schematic::saveDocument()
 {
   QFile file(a_DocName);
   if(!file.open(QIODevice::WriteOnly)) {
-    QMessageBox::critical(0, QObject::tr("Error"),
+    QMessageBox::critical(nullptr, QObject::tr("Error"),
     QObject::tr("Cannot save document!"));
     return -1;
   }
@@ -630,33 +716,32 @@ int Schematic::saveDocument()
   stream << "  <FrameText3=" << t << ">\n";
   stream << "</Properties>\n";
 
-  Painting *pp;
   stream << "<Symbol>\n";     // save all paintings for symbol
-  for(pp = a_SymbolPaints.first(); pp != 0; pp = a_SymbolPaints.next())
+  for(auto* pp : a_SymbolPaints)
     stream << "  <" << pp->save() << ">\n";
   stream << "</Symbol>\n";
 
   stream << "<Components>\n";    // save all components
-  for(Component *pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next())
+  for(Component *pc : a_DocComps)
     stream << "  " << pc->save() << "\n";
   stream << "</Components>\n";
 
   stream << "<Wires>\n";    // save all wires
-  for(Wire *pw = a_DocWires.first(); pw != 0; pw = a_DocWires.next())
+  for(Wire *pw : a_DocWires)
     stream << "  " << pw->save() << "\n";
 
   // save all labeled nodes as wires
-  for(Node *pn = a_DocNodes.first(); pn != 0; pn = a_DocNodes.next())
-    if(pn->Label) stream << "  " << pn->Label->save() << "\n";
+  for(Node *pn : a_DocNodes)
+    if(pn->hasLabel()) stream << "  " << pn->label()->save() << "\n";
   stream << "</Wires>\n";
 
   stream << "<Diagrams>\n";    // save all diagrams
-  for(Diagram *pd = a_DocDiags.first(); pd != 0; pd = a_DocDiags.next())
+  for(Diagram *pd : a_DocDiags)
     stream << "  " << pd->save() << "\n";
   stream << "</Diagrams>\n";
 
   stream << "<Paintings>\n";     // save all paintings
-  for(pp = a_DocPaints.first(); pp != 0; pp = a_DocPaints.next())
+  for(auto* pp : a_DocPaints)
     stream << "  <" << pp->save() << ">\n";
   stream << "</Paintings>\n";
 
@@ -786,12 +871,12 @@ bool Schematic::loadProperties(QTextStream *stream)
     if(Line.isEmpty()) continue;
 
     if(Line.at(0) != '<') {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Format Error:\nWrong property field limiter!"));
       return false;
     }
     if(Line.at(Line.length()-1) != '>') {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Format Error:\nWrong property field limiter!"));
       return false;
     }
@@ -830,18 +915,18 @@ bool Schematic::loadProperties(QTextStream *stream)
     else if(cstr == "FrameText2") misc::convert2Unicode(a_Frame_Text2 = nstr);
     else if(cstr == "FrameText3") misc::convert2Unicode(a_Frame_Text3 = nstr);
     else {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Format Error:\nUnknown property: ")+cstr);
       return false;
     }
     if(!ok) {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Format Error:\nNumber expected in property field!"));
       return false;
     }
   }
 
-  QMessageBox::critical(0, QObject::tr("Error"),
+  QMessageBox::critical(nullptr, QObject::tr("Error"),
                QObject::tr("Format Error:\n'Property' field is not closed!"));
   return false;
 }
@@ -850,29 +935,10 @@ bool Schematic::loadProperties(QTextStream *stream)
 // Inserts a component without performing logic for wire optimization.
 void Schematic::simpleInsertComponent(Component *c)
 {
-  Node *pn;
-  int x, y;
   // connect every node of component
   for (Port *pp : c->Ports) {
-    x = pp->x+c->cx;
-    y = pp->y+c->cy;
+    Node* pn = provideNode(c->cx + pp->x, c->cy + pp->y);
 
-    // check if new node lies upon existing node
-    for(pn = a_DocNodes.first(); pn != 0; pn = a_DocNodes.next())
-      if(pn->cx == x) if(pn->cy == y) {
-        if (!pn->DType.isEmpty()) {
-          pp->Type = pn->DType;
-        }
-        if (!pp->Type.isEmpty()) {
-          pn->DType = pp->Type;
-        }
-        break;
-      }
-
-    if(pn == nullptr) { // create new node, if no existing one lies at this position
-      pn = new Node(x, y);
-      a_DocNodes.append(pn);
-    }
     pn->connect(c);  // connect schematic node to component node
     if (!pp->Type.isEmpty()) {
       pn->DType = pp->Type;
@@ -881,11 +947,11 @@ void Schematic::simpleInsertComponent(Component *c)
     pp->Connection = pn;  // connect component node to schematic node
   }
 
-  a_DocComps.append(c);
+  a_DocComps.push_back(c);
 }
 
 // -------------------------------------------------------------
-bool Schematic::loadComponents(QTextStream *stream, QList<Component*> *List)
+bool Schematic::loadComponents(QTextStream *stream, std::list<Component*> *List)
 {
   QString Line, cstr;
   Component *c;
@@ -904,7 +970,7 @@ bool Schematic::loadComponents(QTextStream *stream, QList<Component*> *List)
       for(z=c->Name.length()-1; z>=0; z--) // cut off number of component name
         if(!c->Name.at(z).isDigit()) break;
       c->Name = c->Name.left(z+1);
-      List->append(c);
+      List->push_back(c);
     }
     else  simpleInsertComponent(c);
   }
@@ -918,44 +984,25 @@ bool Schematic::loadComponents(QTextStream *stream, QList<Component*> *List)
 // Inserts a wire without performing logic for optimizing.
 void Schematic::simpleInsertWire(Wire *pw)
 {
-  Node *pn;
-  // check if first wire node lies upon existing node
-  for(pn = a_DocNodes.first(); pn != 0; pn = a_DocNodes.next())
-    if(pn->cx == pw->x1) if(pn->cy == pw->y1) break;
+  Node* pn = provideNode(pw->P1());
 
-  if(!pn) {   // create new node, if no existing one lies at this position
-    pn = new Node(pw->x1, pw->y1);
-    a_DocNodes.append(pn);
-  }
-
-  if(pw->x1 == pw->x2) if(pw->y1 == pw->y2) {
-    pn->Label = pw->Label;   // wire with length zero are just node labels
-    if (pn->Label) {
-      pn->Label->Type = isNodeLabel;
-      pn->Label->pOwner = pn;
-    }
+  if(pw->P1() == pw->P2()) {
+    pn->acquireLabel(pw->releaseLabel());   // wire with length zero are just node labels
     delete pw;           // delete wire because this is not a wire
     return;
   }
   pn->connect(pw);  // connect schematic node to component node
   pw->Port1 = pn;
 
-  // check if second wire node lies upon existing node
-  for(pn = a_DocNodes.first(); pn != 0; pn = a_DocNodes.next())
-    if(pn->cx == pw->x2) if(pn->cy == pw->y2) break;
-
-  if(!pn) {   // create new node, if no existing one lies at this position
-    pn = new Node(pw->x2, pw->y2);
-    a_DocNodes.append(pn);
-  }
+  pn = provideNode(pw->P2());
   pn->connect(pw);  // connect schematic node to component node
   pw->Port2 = pn;
 
-  a_DocWires.append(pw);
+  a_DocWires.push_back(pw);
 }
 
 // -------------------------------------------------------------
-bool Schematic::loadWires(QTextStream *stream, QList<Element*> *List)
+bool Schematic::loadWires(QTextStream *stream, std::list<Element*> *List)
 {
   Wire *w;
   QString Line;
@@ -965,53 +1012,53 @@ bool Schematic::loadWires(QTextStream *stream, QList<Element*> *List)
     Line = Line.trimmed();
     if(Line.isEmpty()) continue;
 
-    // (Node*)4 =  move all ports (later on)
-    w = new Wire(0,0,0,0, (Node*)4,(Node*)4);
+    w = new Wire();
     if(!w->load(Line)) {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Format Error:\nWrong 'wire' line format!"));
       delete w;
       return false;
     }
+
+    // When this pointer is not null, "paste" operation is in progress.
+    // In this case loaded elements must be placed in the list and not
+    // into schematic.
     if(List) {
-      if(w->x1 == w->x2) if(w->y1 == w->y2) if(w->Label) {
-        w->Label->Type = isMovingLabel;
-        List->append(w->Label);
+
+      // Special case: node label. It's stored as zero-length wire.
+      // Only the label is kept, so it becomes "free" i.e. not having
+      // a host element like wire or node. We must be careful to treat
+      // such labels in a special way in other parts of the codebase.
+      if (w->P1() == w->P2() && w->hasLabel()) {
+        List->push_back(w->releaseLabel().release());
         delete w;
         continue;
       }
-      List->append(w);
-      if(w->Label)  List->append(w->Label);
+
+      List->push_back(w);
+
+      // Label is also added to the list as *independent* element. This is
+      // because items of this list a subject of moving, rotating, etc. and
+      // label must be treated the same way.
+      //
+      // Think of the list as of "selected items" and it will instantly make
+      // sense.
+      //
+      // Label ownership is still controlled by the host wire.
+      if(w->hasLabel())  List->push_back(w->label());
     }
     else {
-      // Quick fix for ra3xdh#1273.
-      //
-      // A wire whose (x1,y1) coordinates are not less than (x2,y2)
-      // coordinates somehow deals some damage like crashes or funny behaviour.
-      //
-      // I wasn't able to understand how exactly this happens, i.e. why it's
-      // important to have x1 less than x2 for a wire, so I decided to fix this
-      // in a most straightforward way by "normalizing" the wire before installing
-      // it into schematic
-      if (w->x1 > w->x2) {
-        std::swap(w->x1, w->x2);
-        std::swap(w->y1, w->y2);
-      } else if (w->x1 == w->x2 && w->y1 > w->y2) {
-        std::swap(w->x1, w->x2);
-        std::swap(w->y1, w->y2);
-      }
-
       simpleInsertWire(w);
     }
   }
 
-  QMessageBox::critical(0, QObject::tr("Error"),
+  QMessageBox::critical(nullptr, QObject::tr("Error"),
   QObject::tr("Format Error:\n'Wire' field is not closed!"));
   return false;
 }
 
 // -------------------------------------------------------------
-bool Schematic::loadDiagrams(QTextStream *stream, QList<Diagram*> *List)
+bool Schematic::loadDiagrams(QTextStream *stream, std::list<Diagram*> *List)
 {
   Diagram *d;
   QString Line, cstr;
@@ -1034,27 +1081,27 @@ bool Schematic::loadDiagrams(QTextStream *stream, QList<Diagram*> *List)
     else if(cstr == "<Time") d = new TimingDiagram();
     else if(cstr == "<Truth") d = new TruthDiagram();
     else {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Format Error:\nUnknown diagram!"));
       return false;
     }
 
     if(!d->load(Line, stream)) {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Format Error:\nWrong 'diagram' line format!"));
       delete d;
       return false;
     }
-    List->append(d);
+    List->push_back(d);
   }
 
-  QMessageBox::critical(0, QObject::tr("Error"),
+  QMessageBox::critical(nullptr, QObject::tr("Error"),
   QObject::tr("Format Error:\n'Diagram' field is not closed!"));
   return false;
 }
 
 // -------------------------------------------------------------
-bool Schematic::loadPaintings(QTextStream *stream, QList<Painting*> *List)
+bool Schematic::loadPaintings(QTextStream *stream, std::list<Painting*> *List)
 {
   Painting *p=0;
   QString Line, cstr;
@@ -1067,7 +1114,7 @@ bool Schematic::loadPaintings(QTextStream *stream, QList<Painting*> *List)
     Line = Line.trimmed();
     if(Line.isEmpty()) continue;
     if( (Line.at(0) != '<') || (Line.at(Line.length()-1) != '>')) {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Format Error:\nWrong 'painting' line delimiter!"));
       return false;
     }
@@ -1082,22 +1129,23 @@ bool Schematic::loadPaintings(QTextStream *stream, QList<Painting*> *List)
     else if(cstr == "Rectangle") p = new qucs::Rectangle();
     else if(cstr == "Arrow") p = new Arrow();
     else if(cstr == "Ellipse") p = new qucs::Ellipse();
+    else if(cstr == "ImagePainting") p = new ImagePainting();
     else {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("Format Error:\nUnknown painting!"));
       return false;
     }
 
     if(!p->load(Line)) {
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
         QObject::tr("Format Error:\nWrong 'painting' line format!"));
       delete p;
       return false;
     }
-    List->append(p);
+    List->push_back(p);
   }
 
-  QMessageBox::critical(0, QObject::tr("Error"),
+  QMessageBox::critical(nullptr, QObject::tr("Error"),
   QObject::tr("Format Error:\n'Painting' field is not closed!"));
   return false;
 }
@@ -1112,7 +1160,7 @@ bool Schematic::loadDocument()
   if(!file.open(QIODevice::ReadOnly)) {
     /// \todo implement unified error/warning handling GUI and CLI
     if (QucsMain != nullptr)
-      QMessageBox::critical(0, QObject::tr("Error"),
+      QMessageBox::critical(nullptr, QObject::tr("Error"),
                  QObject::tr("Cannot load document: ")+a_DocName);
     else
       qCritical() << "Schematic::loadDocument:"
@@ -1138,7 +1186,7 @@ bool Schematic::loadDocument()
 
   if(Line.left(16) != "<Qucs Schematic ") {  // wrong file type ?
     file.close();
-    QMessageBox::critical(0, QObject::tr("Error"),
+    QMessageBox::critical(nullptr, QObject::tr("Error"),
     QObject::tr("Wrong document type: ")+a_DocName);
     return false;
   }
@@ -1147,7 +1195,7 @@ bool Schematic::loadDocument()
   if(!misc::checkVersion(Line)) { // wrong version number ?
 
     QMessageBox::StandardButton result;
-    result = QMessageBox::warning(0,
+    result = QMessageBox::warning(nullptr,
                                   QObject::tr("Warning"),
                                   QObject::tr("Wrong document version \n") +
                                               a_DocName + "\n" +
@@ -1170,12 +1218,10 @@ bool Schematic::loadDocument()
     if(Line.isEmpty()) continue;
 
     if(Line == "<Symbol>") {
-      QList<Painting*> paintings;
-      if (!loadPaintings(&stream, &paintings)) {
+      if (!loadPaintings(&stream, &a_SymbolPaints)) {
         file.close();
         return false;
       }
-      shim::copyToQ3PtrList(paintings, a_SymbolPaints);
     }
     else
     if(Line == "<Properties>") {
@@ -1188,19 +1234,15 @@ bool Schematic::loadDocument()
       if(!loadWires(&stream)) { file.close(); return false; } }
     else
     if(Line == "<Diagrams>") {
-      QList<Diagram*> diagrams;
-      if (!loadDiagrams(&stream, &diagrams)) { file.close(); return false; }
-      shim::copyToQ3PtrList(diagrams, a_DocDiags);
+      if (!loadDiagrams(&stream, &a_DocDiags)) { file.close(); return false; }
     }
     else
     if(Line == "<Paintings>") {
-      QList<Painting*> paintings;
-      if (!loadPaintings(&stream, &paintings)) { file.close(); return false; }
-      shim::copyToQ3PtrList(paintings, a_DocPaints);
+      if (!loadPaintings(&stream, &a_DocPaints)) { file.close(); return false; }
     }
     else {
        qDebug() << Line;
-       QMessageBox::critical(0, QObject::tr("Error"),
+       QMessageBox::critical(nullptr, QObject::tr("Error"),
       QObject::tr("File Format Error:\nUnknown field!"));
       file.close();
       return false;
@@ -1216,30 +1258,25 @@ bool Schematic::loadDocument()
 // string. This is used to save state for undo operation.
 QString Schematic::createUndoString(char Op)
 {
-  Wire *pw;
-  Diagram *pd;
-  Painting *pp;
-  Component *pc;
-
   // Build element document.
   QString s = "  \n";
   s.replace(0,1,Op);
-  for(pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next())
+  for(auto* pc : a_DocComps)
     s += pc->save()+"\n";
   s += "</>\n";  // short end flag
 
-  for(pw = a_DocWires.first(); pw != 0; pw = a_DocWires.next())
+  for(auto* pw : a_DocWires)
     s += pw->save()+"\n";
   // save all labeled nodes as wires
-  for(Node *pn = a_DocNodes.first(); pn != 0; pn = a_DocNodes.next())
-    if(pn->Label) s += pn->Label->save()+"\n";
+  for(Node *pn : a_DocNodes)
+    if(pn->hasLabel()) s += pn->label()->save()+"\n";
   s += "</>\n";
 
-  for(pd = a_DocDiags.first(); pd != 0; pd = a_DocDiags.next())
+  for(auto* pd : a_DocDiags)
     s += pd->save()+"\n";
   s += "</>\n";
 
-  for(pp = a_DocPaints.first(); pp != 0; pp = a_DocPaints.next())
+  for(auto* pp : a_DocPaints)
     s += "<"+pp->save()+">\n";
   s += "</>\n";
 
@@ -1250,7 +1287,6 @@ QString Schematic::createUndoString(char Op)
 // Same as "createUndoString(char Op)" but for symbol edit mode.
 QString Schematic::createSymbolUndoString(char Op)
 {
-  Painting *pp;
 
   // Build element document.
   QString s = "  \n";
@@ -1259,7 +1295,7 @@ QString Schematic::createSymbolUndoString(char Op)
   s += "</>\n";  // short end flag for wires
   s += "</>\n";  // short end flag for diagrams
 
-  for(pp = a_SymbolPaints.first(); pp != 0; pp = a_SymbolPaints.next())
+  for(auto* pp : a_SymbolPaints)
     s += "<"+pp->save()+">\n";
   s += "</>\n";
 
@@ -1284,16 +1320,8 @@ bool Schematic::rebuild(QString *s)
   // read content *************************
   if(!loadComponents(&stream))  return false;
   if(!loadWires(&stream))  return false;
-  {
-    QList<Diagram*> diagrams;
-    if (!loadDiagrams(&stream, &diagrams)) return false;
-    shim::copyToQ3PtrList(diagrams, a_DocDiags);
-  }
-  {
-    QList<Painting*> paintings;
-    if (!loadPaintings(&stream, &paintings)) return false;
-    shim::copyToQ3PtrList(paintings, a_DocPaints);
-  }
+  if (!loadDiagrams(&stream, &a_DocDiags)) return false;
+  if (!loadPaintings(&stream, &a_DocPaints)) return false;
 
   return true;
 }
@@ -1313,11 +1341,8 @@ bool Schematic::rebuildSymbol(QString *s)
   Line = stream.readLine();  // skip wires
   Line = stream.readLine();  // skip diagrams
 
-  {
-    QList<Painting*> paintings;
-    if (!loadPaintings(&stream, &paintings)) return false;
-    shim::copyToQ3PtrList(paintings, a_SymbolPaints);
-  }
+  if (!loadPaintings(&stream, &a_SymbolPaints)) return false;
+
   return true;
 }
 
@@ -1331,20 +1356,19 @@ bool Schematic::rebuildSymbol(QString *s)
 void Schematic::createNodeSet(QStringList& Collect, int& countInit,
           Conductor *pw, Node *p1)
 {
-  if(pw->Label)
-    if(!pw->Label->initValue.isEmpty())
+  if(pw->hasLabel())
+    if(!pw->label()->initValue.isEmpty())
       Collect.append("NodeSet:NS" + QString::number(countInit++) + " " +
-                     p1->Name + " U=\"" + pw->Label->initValue + "\"");
+                     p1->Name + " U=\"" + pw->label()->initValue + "\"");
 }
 
 // ---------------------------------------------------
 void Schematic::throughAllNodes(bool User, QStringList& Collect,
         int& countInit)
 {
-  Node *pn;
   int z=0;
 
-  for(pn = a_DocNodes.first(); pn != 0; pn = a_DocNodes.next()) {
+  for(Node* pn : a_DocNodes) {
     if(pn->Name.isEmpty() == User) {
       continue;  // already named ?
     }
@@ -1436,9 +1460,7 @@ int Schematic::testFile(const QString& DocName)
 // Collects the signal names for digital simulations.
 void Schematic::collectDigitalSignals(void)
 {
-  Node *pn;
-
-  for(pn = a_DocNodes.first(); pn != 0; pn = a_DocNodes.next()) {
+  for(auto* pn : a_DocNodes) {
     DigMap::Iterator it = a_Signals.find(pn->Name);
     if(it == a_Signals.end()) { // avoid redeclaration of signal
       a_Signals.insert(pn->Name, DigSignal(pn->Name, pn->DType));
@@ -1451,40 +1473,40 @@ void Schematic::collectDigitalSignals(void)
 // ---------------------------------------------------
 // Propagates the given node to connected component ports.
 void Schematic::propagateNode(QStringList& Collect,
-              int& countInit, Node *pn)
+              int& countInit, Node* start_node)
 {
   bool setName=false;
-  Q3PtrList<Node> Cons;
-  Node *p2;
-  Wire *pw;
+  std::list<Node*> Cons;
 
-  Cons.append(pn);
-  for(p2 = Cons.first(); p2 != 0; p2 = Cons.next())
-    for(auto* pe : *p2)
-      if(pe->Type == isWire) {
-        pw = (Wire*)pe;
-        if(p2 != pw->Port1) {
-          if(pw->Port1->Name.isEmpty()) {
-            pw->Port1->Name = pn->Name;
-            pw->Port1->State = 1;
-            Cons.append(pw->Port1);
-            setName = true;
-          }
-        }
-        else {
-          if(pw->Port2->Name.isEmpty()) {
-            pw->Port2->Name = pn->Name;
-            pw->Port2->State = 1;
-            Cons.append(pw->Port2);
-            setName = true;
-          }
-        }
-        if(setName) {
-          Cons.findRef(p2);   // back to current Connection
-          if (a_isAnalog) createNodeSet(Collect, countInit, pw, pn);
-            setName = false;
+  Cons.push_back(start_node);
+  for(auto it = Cons.begin(); it != Cons.end(); it++) {
+    auto* node = *it;
+
+    for (auto* wire : node->wires()) {
+      if (node != wire->Port1) {
+        if (wire->Port1->Name.isEmpty()) {
+          wire->Port1->Name = start_node->Name;
+          wire->Port1->State = 1;
+          Cons.push_back(wire->Port1);
+          setName = true;
         }
       }
+      else {
+        if (wire->Port2->Name.isEmpty()) {
+          wire->Port2->Name = start_node->Name;
+          wire->Port2->State = 1;
+          Cons.push_back(wire->Port2);
+          setName = true;
+        }
+      }
+
+      if (setName) {
+        if (a_isAnalog) createNodeSet(Collect, countInit, wire, start_node);
+          setName = false;
+      }
+
+    }
+  }
   Cons.clear();
 }
 
@@ -1508,10 +1530,8 @@ bool Schematic::throughAllComps(QTextStream *stream, int& countInit,
   QString s;
 
   // give the ground nodes the name "gnd", and insert subcircuits etc.
-  Q3PtrListIterator<Component> it(a_DocComps);
-  Component *pc;
-  while((pc = it.current()) != 0) {
-    ++it;
+  for (auto* pc : a_DocComps) {
+
     if(pc->isActive != COMP_IS_ACTIVE) continue;
 
     // check analog/digital typed components
@@ -1732,24 +1752,24 @@ bool Schematic::giveNodeNames(QTextStream *stream, int& countInit,
                    QStringList& Collect, QPlainTextEdit *ErrText, int NumPorts)
 {
   // delete the node names
-  for(Node *pn = a_DocNodes.first(); pn != 0; pn = a_DocNodes.next()) {
+  for(Node *pn : a_DocNodes) {
     pn->State = 0;
-    if(pn->Label) {
+    if(pn->hasLabel()) {
       if(a_isAnalog)
-        pn->Name = pn->Label->Name;
+        pn->Name = pn->label()->Name;
       else
-        pn->Name = "net" + pn->Label->Name;
+        pn->Name = "net" + pn->label()->Name;
     }
     else pn->Name = "";
   }
 
   // set the wire names to the connected node
-  for(Wire *pw = a_DocWires.first(); pw != 0; pw = a_DocWires.next())
-    if(pw->Label != 0) {
+  for(Wire *pw : a_DocWires)
+    if(pw->hasLabel()) {
       if(a_isAnalog)
-        pw->Port1->Name = pw->Label->Name;
+        pw->Port1->Name = pw->label()->Name;
       else  // avoid to use reserved VHDL words
-        pw->Port1->Name = "net" + pw->Label->Name;
+        pw->Port1->Name = "net" + pw->label()->Name;
     }
 
   // go through components
@@ -1823,7 +1843,6 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
   QStringList InOutPorts;
   QStringList::iterator it_name;
   QStringList::iterator it_type;
-  Component *pc;
 
   // probably creating a library currently
   QTextStream * tstream = stream;
@@ -1841,7 +1860,7 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
   // collect subcircuit ports and sort their node names into
   // "SubcircuitPortNames"
   a_PortTypes.clear();
-  for(pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next()) {
+  for(auto* pc : a_DocComps) {
     if(pc->Model.at(0) == '.') { // no simulations in subcircuits
       ErrText->appendPlainText(
         QObject::tr("WARNING: Ignore simulation component in subcircuit \"%1\".").arg(a_DocName)+"\n");
@@ -1920,7 +1939,6 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
   QString f = misc::properFileName(a_DocName);
   QString Type = misc::properName(f);
 
-  Painting *pi;
 
 
 
@@ -1930,12 +1948,11 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
         if(a_isAnalog) {
             // ..... analog subcircuit ...................................
             (*tstream) << "\n.Def:" << Type << " " << SubcircuitPortNames.join(" ");
-            for(pi = a_SymbolPaints.first(); pi != 0; pi = a_SymbolPaints.next())
+            for (auto* pi : a_SymbolPaints)
               if(pi->Name == ".ID ") {
                 ID_Text *pid = (ID_Text*)pi;
-                QList<SubParameter *>::const_iterator it;
-                for(it = pid->Parameter.constBegin(); it != pid->Parameter.constEnd(); it++) {
-                  s = (*it)->Name; // keep 'Name' unchanged
+                for (const auto& sub_param : pid->subParameters) {
+                  s = sub_param->name; // keep 'Name' unchanged
                   (*tstream) << " " << s.replace("=", "=\"") << '"';
                 }
                 break;
@@ -1943,7 +1960,7 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
             (*tstream) << '\n';
 
             // write all components with node names into netlist file
-            for(pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next())
+            for (auto* pc : a_DocComps)
               (*tstream) << pc->getNetlist();
 
             (*tstream) << ".Def:End\n";
@@ -1974,13 +1991,12 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
               (*tstream) << "\n";
 
               // subcircuit parameters
-              for(pi = a_SymbolPaints.first(); pi != 0; pi = a_SymbolPaints.next())
+              for (auto* pi : a_SymbolPaints)
                 if(pi->Name == ".ID ") {
-                  QList<SubParameter *>::const_iterator it;
                   ID_Text *pid = (ID_Text*)pi;
-                  for(it = pid->Parameter.constBegin(); it != pid->Parameter.constEnd(); it++) {
-                    s = (*it)->Name.section('=', 0,0);
-                    QString v = misc::Verilog_Param((*it)->Name.section('=', 1,1));
+                  for (const auto& sub_param : pid->subParameters) {
+                    s = sub_param->name.section('=', 0,0);
+                    QString v = misc::Verilog_Param(sub_param->name.section('=', 1,1));
                     (*tstream) << " parameter " << s << " = " << v << ";\n";
                   }
                   (*tstream) << "\n";
@@ -1988,7 +2004,7 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
                 }
 
               // write all equations into netlist file
-              for(pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next()) {
+              for (auto* pc : a_DocComps) {
                 if(pc->Model == "Eqn") {
                   (*tstream) << pc->get_Verilog_Code(NumPorts);
                 }
@@ -1998,7 +2014,7 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
               (*tstream) << " assign gnd = 0;\n"; // should appear only once
 
               // write all components into netlist file
-              for(pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next()) {
+              for (auto* pc : a_DocComps) {
                 if(pc->Model != "Eqn") {
                   s = pc->get_Verilog_Code(NumPorts);
                   if(s.length()>0 && s.at(0) == '\xA7') {  //section symbol
@@ -2015,16 +2031,15 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
               (*tstream) << "entity Sub_" << Type << " is\n";
 
               QString generic_str;
-              for(pi = a_SymbolPaints.first(); pi != 0; pi = a_SymbolPaints.next()) {
+              for (auto* pi : a_SymbolPaints) {
                 if(pi->Name == ".ID ") {
                   ID_Text *pid = (ID_Text*)pi;
-                  QList<SubParameter *>::const_iterator it;
 
 
 
-                  for(it = pid->Parameter.constBegin(); it != pid->Parameter.constEnd(); it++) {
-                    s = (*it)->Name;
-                    QString t = (*it)->Type.isEmpty() ? "real" : (*it)->Type;
+                  for (const auto& sub_param : pid->subParameters) {
+                    s = sub_param->name;
+                    QString t = sub_param->type.isEmpty() ? "real" : sub_param->type;
                     generic_str += s.replace("=", " : "+t+" := ") + ";\n ";
                   }
 
@@ -2058,7 +2073,7 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
               }
 
               // write all equations into netlist file
-              for(pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next()) {
+              for (auto* pc : a_DocComps) {
                 if(pc->Model == "Eqn") {
                   ErrText->insertPlainText(
                               QObject::tr("WARNING: Equations in \"%1\" are 'time' typed.").
@@ -2073,7 +2088,7 @@ void Schematic::createSubNetlistPlain(QTextStream *stream, QPlainTextEdit *ErrTe
               (*tstream) << " gnd <= '0';\n"; // should appear only once
 
               // write all components into netlist file
-              for(pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next()) {
+              for (auto* pc : a_DocComps) {
                 if(pc->Model != "Eqn") {
                     s = pc->get_VHDL_Code(NumPorts);
                     if(s.length()>0 && s.at(0) == '\xA7') {  //section symbol
@@ -2130,7 +2145,7 @@ bool Schematic::createSubNetlist(QTextStream *stream, int& countInit,
           ErrText->insertPlainText(s);
           return false;
       }
-      kern->createSubNetlsit(*stream);
+      kern->createSubNetlist(*stream);
 
       delete kern;
   }
@@ -2144,7 +2159,7 @@ bool Schematic::createSubNetlist(QTextStream *stream, int& countInit,
 // Detect simulation domain (analog/digital) by looking at component types.
 bool Schematic::isDigitalCircuit()
 {
-  for(Component *pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next()) {
+  for (Component *pc : a_DocComps) {
       if(pc->isActive == COMP_IS_OPEN) continue;
       if(pc->Model.at(0) == '.' && pc->Model == ".Digi") {
           return true;  // Verilog simulation detected
@@ -2166,7 +2181,7 @@ int Schematic::prepareNetlist(QTextStream& stream, QStringList& Collect,
   int allTypes = 0, NumPorts = 0;
 
   // Detect simulation domain (analog/digital) by looking at component types.
-  for(Component *pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next()) {
+  for (Component *pc : a_DocComps) {
     if(pc->isActive == COMP_IS_OPEN) continue;
     if(pc->Model.at(0) == '.') {
       if(pc->Model == ".Digi") {
@@ -2312,7 +2327,7 @@ QString Schematic::createNetlist(QTextStream& stream, int NumPorts)
   FileList.clear();
 
   QString s, Time;
-  for(Component *pc = a_DocComps.first(); pc != 0; pc = a_DocComps.next()) {
+  for(Component *pc : a_DocComps) {
     if(a_isAnalog) {
       s = pc->getNetlist();
     }

@@ -352,7 +352,8 @@ ComponentDialog::ComponentDialog(Component* schematicComponent, Schematic* schem
   componentNameWidget->setCheck(component->showName);
 
   // Try to work out what kind of component this is.
-  isEquation = QStringList({"Eqn", "NutmegEq", "SpiceIC", "SpicePar", "SpiceOptions", "SpiceFunc", "SpiceCSPar", "SpGlobPar"}).contains(component->Model);
+  isEquation = QStringList({"Eqn", "NutmegEq", "SpiceIC", "SpicePar", "SpiceOptions", "SpiceFunc", "SpiceCSPar", "SpGlobPar",
+                            "SpiceNodeset"}).contains(component->Model);
   hasSweep = QStringList({".AC", ".DISTO", ".NOISE", ".SW", ".SP", ".TR"}).contains(component->Model);
   hasFile = component->Props.count() > 0 && component->Props.at(0)->Name == "File";
 
@@ -362,8 +363,10 @@ ComponentDialog::ComponentDialog(Component* schematicComponent, Schematic* schem
   // for a given simulation type. Then only create the valid widgets fo
   // sweepParams[".AC"] = QStringList({"Type", "Start", "Stop", "Points"});
 
-  paramsHiddenBySim["Export"] = QStringList{"NutmegEq", "SpiceIC", "SpicePar", "SpiceOptions", "SpiceFunc", "SpiceCSPar", "SpGlobPar"};
-  paramsHiddenBySim["Sim"] = QStringList{".AC", ".DISTO", ".SP", ".NOISE", ".TR", "Eqn", "SpiceIC", "SpicePar", "SpiceOptions", "SpiceFunc", "SpiceCSPar", "SpGlobPar"};
+  paramsHiddenBySim["Export"] = QStringList{"NutmegEq", "SpiceIC", "SpicePar", "SpiceOptions", "SpiceFunc",
+                                            "SpiceCSPar", "SpGlobPar", "SpiceNodeset"};
+  paramsHiddenBySim["Sim"] = QStringList{".AC", ".DISTO", ".SP", ".NOISE", ".TR", "Eqn", "SpiceIC", "SpicePar",
+                                         "SpiceOptions", "SpiceFunc", "SpiceCSPar", "SpGlobPar", "SpiceNodeset"};
   paramsHiddenBySim["Param"] = QStringList{".AC", ".DISTO", ".SP", ".NOISE", ".TR"};
 
   // Setup the dialog according to the component kind.
@@ -455,7 +458,7 @@ ComponentDialog::ComponentDialog(Component* schematicComponent, Schematic* schem
     QVBoxLayout *propertyTableLayout = new QVBoxLayout(propertyGroup);
 
     // Allow populating from a spice file if appropriate.
-    if (QStringList({"Diode", "_BJT", "JFET", "MOSFET"}).contains(component->Model))
+    if (QStringList({"Diode", "_BJT", "JFET", "MOSFET", "_MOSFET", "VDMOS"}).contains(component->Model))
     {
       QHBoxLayout *spiceButtonLayout = new QHBoxLayout;
       propertyTableLayout->addLayout(spiceButtonLayout);
@@ -489,8 +492,9 @@ ComponentDialog::ComponentDialog(Component* schematicComponent, Schematic* schem
   QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | 
                                       QDialogButtonBox::Apply | QDialogButtonBox::Cancel);
 
-  connect(buttonBox, &QDialogButtonBox::accepted, this, &ComponentDialog::slotOKButton);
+  connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
   connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+  connect(this, &QDialog::accepted, this, &ComponentDialog::slotOKButton);
   connect(buttonBox->button(QDialogButtonBox::Apply), &QPushButton::clicked, this, &ComponentDialog::slotApplyButton);
   mainLayout->addWidget(buttonBox);
 
@@ -635,6 +639,10 @@ void ComponentDialog::updatePropertyTable(const Component* updateComponent)
     int row = 0;
     for (const Property* property : updateComponent->Props)
     {
+      if ((property->simulators & QucsSettings.DefaultSimulator) != QucsSettings.DefaultSimulator) {
+        continue;
+      }
+
       if (hasSweep && sweepProperties.contains(property->Name))
         continue;
 
@@ -754,7 +762,6 @@ void ComponentDialog::slotOKButton()
   settings.setValue("ComponentDialog/geometry", saveGeometry());
 
   slotApplyButton();
-  done(QDialog::Accepted);
 }
 
 // -------------------------------------------------------------------------
@@ -802,6 +809,10 @@ void ComponentDialog::slotApplyButton()
     row = 0;
     for (Property* property : component->Props)
     {
+      if ((property->simulators & QucsSettings.DefaultSimulator) != QucsSettings.DefaultSimulator) {
+        continue;
+      }
+
       // Ignore sweep parameters here.
       if (hasSweep && sweepParamWidget.contains(property->Name))
         continue;
@@ -1002,8 +1013,7 @@ QStringList ComponentDialog::getSimulationList(bool includeGeneric)
         return sim_lst;
     }
     
-    for (size_t i = 0; i < sch->a_DocComps.count(); i++) {
-        Component *c = sch->a_DocComps.at(i);
+    for (Component* c : sch->a_DocComps) {
         if (!c->isSimulation) continue;
         if (c->Model == ".FOUR") continue;
         if (c->Model == ".PZ") continue;

@@ -73,8 +73,6 @@
 #include "dialogs/simmessage.h"
 #include "dialogs/exportdialog.h"
 #include "dialogs/displaydialog.h"
-//#include "dialogs/vtabwidget.h"
-//#include "dialogs/vtabbeddockwidget.h"
 #include "extsimkernels/externsimdialog.h"
 #include "dialogs/tuner.h"
 #include "octave_window.h"
@@ -85,8 +83,9 @@
 #include "extsimkernels/verilogawriter.h"
 #include "extsimkernels/CdlNetlistWriter.h"
 #include "extsimkernels/simsettingsdialog.h"
-//#include "extsimkernels/codemodelgen.h"
 #include "symbolwidget.h"
+#include "diagram.h"
+#include "extsimkernels/CdlSettingsDialog.h"
 
 QucsApp::QucsApp(bool netlist2Console) :
   a_netlist2Console(netlist2Console)
@@ -126,10 +125,10 @@ QucsApp::QucsApp(bool netlist2Console) :
   //updateSchNameHash();
   //updateSpiceNameHash();
 
-  MouseMoveAction = 0;
-  MousePressAction = 0;
-  MouseReleaseAction = 0;
-  MouseDoubleClickAction = 0;
+  MouseMoveAction = nullptr;
+  MousePressAction = nullptr;
+  MouseReleaseAction = nullptr;
+  MouseDoubleClickAction = nullptr;
 
   initView();
   initActions();
@@ -140,6 +139,7 @@ QucsApp::QucsApp(bool netlist2Console) :
   viewBrowseDock->setChecked(true);
   slotViewOctaveDock(false);
   slotUpdateRecentFiles();
+  slotUpdateRecentProjects();
   initCursorMenu();
   //Module::registerModules ();
 
@@ -286,7 +286,7 @@ void QucsApp::initView()
   setStyleSheet("QToolButton { padding: 0px; }");
 #endif
 
-  DocumentTab = new QTabWidget(this);
+  DocumentTab = new ContextMenuTabWidget(this);
 #if __APPLE__
   DocumentTab->setDocumentMode(true);
 #endif
@@ -735,7 +735,7 @@ QucsDoc * QucsApp::findDoc (QString File, int * Pos)
   QucsDoc * d;
   int No = 0;
   File = QDir::toNativeSeparators (File);
-  while ((d = getDoc (No++)) != 0)
+  while ((d = getDoc (No++)) != nullptr)
     if (QDir::toNativeSeparators (d->getDocName()) == File) {
       if (Pos) *Pos = No - 1;
       return d;
@@ -807,6 +807,12 @@ void QucsApp::fillSimulatorsComboBox() {
         QucsSettings.DefaultSimulator = simulatorsCombobox->itemData(idx).toInt();
     } else {
         QucsSettings.DefaultSimulator = spicecompat::simNotSpecified;
+        QMessageBox::critical(this,tr("Error"),
+                              tr("No simulation backend found! Simulaiton not possible.\n"
+                                 "This may happen by the following reasons:\n\n"
+                                 "1. You are using portable version and have moved installation directory.\n"
+                                 "2. The simulators were removed from system or the paths configured wrong.\n\n"
+                                 "Please configure simulator paths in Simulation->Simulator settings menu.\n"));
     }
 
     simulate->setEnabled(anySimulatorsFound);
@@ -892,7 +898,7 @@ void QucsApp::slotSetCompView (int index)
 
   Comps = Category::getModules(item);
   QString Name;
-  pInfoFunc Infos = 0;
+  pInfoFunc Infos = nullptr;
 
   // if something was registered dynamically, get and draw icons into dock
   if (item == QObject::tr("verilog-a user devices")) {
@@ -1088,10 +1094,10 @@ void QucsApp::slotSelectComponent(QListWidgetItem *item)
   slotHideEdit(); // disable text edit of component property
 
   // delete previously selected elements
-  if(view->selElem != 0)  delete view->selElem;
-  view->selElem  = 0;   // no component/diagram/painting selected
+  if(view->selElem != nullptr)  delete view->selElem;
+  view->selElem  = nullptr;   // no component/diagram/painting selected
 
-  if(item == 0) {   // mouse button pressed not over an item ?
+  if(item == nullptr) {   // mouse button pressed not over an item ?
     CompComps->clearSelection();  // deselect component in ViewList
     return;
   }
@@ -1106,15 +1112,15 @@ void QucsApp::slotSelectComponent(QListWidgetItem *item)
     activeAction->setChecked(false);       // set last toolbar button off
     activeAction->blockSignals(false);
   }
-  activeAction = 0;
+  activeAction = nullptr;
 
   MouseMoveAction = &MouseActions::MMoveElement;
   MousePressAction = &MouseActions::MPressElement;
-  MouseReleaseAction = 0;
-  MouseDoubleClickAction = 0;
+  MouseReleaseAction = nullptr;
+  MouseDoubleClickAction = nullptr;
 
-  pInfoFunc Infos = 0;
-  pInfoVAFunc InfosVA = 0;
+  pInfoFunc Infos = nullptr;
+  pInfoVAFunc InfosVA = nullptr;
 
   int i = CompComps->row(item);
   QList<Module *> Comps;
@@ -1194,9 +1200,17 @@ void QucsApp::slotShowContentMenu(const QPoint& pos)
 {
   QModelIndex idx = Content->indexAt(pos);
   if (idx.isValid() && idx.parent().isValid()) {
+    QItemSelectionModel *selectionModel = Content->selectionModel();
+    bool multipleSelected = selectionModel->selectedIndexes().count() > 1;
+
     ActionCMenuInsert->setVisible(
         idx.sibling(idx.row(), 1).data().toString().contains(tr("-port"))
-    );
+        );
+
+    // Disable Duplicate and Rename when multiple files are selected
+    ActionCMenuCopy->setEnabled(!multipleSelected);
+    ActionCMenuRename->setEnabled(!multipleSelected);
+
     ContentMenu->popup(Content->mapToGlobal(pos));
   }
 }
@@ -1246,7 +1260,7 @@ void QucsApp::slotCMenuCopy()
   //check changed file save
   int z = 0; //search if the doc is loaded
   QucsDoc *d = findDoc(file, &z);
-  if (d != NULL && d->getDocChanged()) {
+  if (d != nullptr && d->getDocChanged()) {
     DocumentTab->setCurrentIndex(z);
     int ret = QMessageBox::question(this, tr("Copying Qucs document"),
         tr("The document contains unsaved changes!\n") +
@@ -1341,29 +1355,61 @@ void QucsApp::slotCMenuRename()
 
 void QucsApp::slotCMenuDelete()
 {
-  QModelIndex idx = Content->currentIndex();
+  QItemSelectionModel *selectionModel = Content->selectionModel();
+  QModelIndexList selected = selectionModel->selectedIndexes();
 
-  //test the item is valid
-  if (!idx.isValid() || !idx.parent().isValid()) { return; }
+         // We only want column 0 items (file names)
+  QSet<QString> filesToDelete; // Use QSet to avoid duplicates
+  for (const QModelIndex &index : selected) {
+    if (index.column() == 0 && index.parent().isValid()) {
+      QString filename = index.sibling(index.row(), 0).data().toString();
+      filesToDelete.insert(filename);
+    }
+  }
 
-  QString filename = idx.sibling(idx.row(), 0).data().toString();
-  QString file(QucsSettings.QucsWorkDir.filePath(filename));
-
-  if (findDoc (file)) {
-    QMessageBox::critical(this, tr("Error"), tr("Cannot delete an open file!"));
+  if (filesToDelete.isEmpty()) {
+    QMessageBox::information(this, tr("Info"), tr("No files selected for deletion!"));
     return;
   }
 
-  int No;
-  No = QMessageBox::warning(this, tr("Warning"),
-      tr("This will delete the file permanently! Continue ?"),
-      QMessageBox::No | QMessageBox::Yes);
-  if(No == QMessageBox::Yes) {
-    if(!QFile::remove(file)) {
-      QMessageBox::critical(this, tr("Error"),
-      tr("Cannot delete file: %1").arg(filename));
-      return;
+  QString message;
+  if (filesToDelete.size() > 1) {
+    message = tr("This will delete %1 files permanently! Continue?").arg(filesToDelete.size());
+  } else {
+    message = tr("This will delete the file permanently! Continue?");
+  }
+
+  int response = QMessageBox::warning(this, tr("Warning"),
+                                      message,
+                                      QMessageBox::No | QMessageBox::Yes);
+
+  if (response != QMessageBox::Yes) {
+    return;
+  }
+
+  QDir dir(QucsSettings.QucsWorkDir.path());
+  bool allDeleted = true;
+  QStringList failedFiles;
+
+  for (const QString &filename : filesToDelete) {
+    QString filePath = dir.filePath(filename);
+
+    if (findDoc(filePath)) {
+      failedFiles << filename + " (" + tr("file is open") + ")";
+      allDeleted = false;
+      continue;
     }
+
+    if (!QFile::remove(filePath)) {
+      failedFiles << filename;
+      allDeleted = false;
+    }
+  }
+
+  if (!allDeleted) {
+    QString errorMsg = tr("Could not delete the following files:\n") +
+                       failedFiles.join("\n");
+    QMessageBox::critical(this, tr("Error"), errorMsg);
   }
 
   slotUpdateTreeview();
@@ -1433,6 +1479,9 @@ void QucsApp::slotButtonProjNew()
 // Opens an existing project.
 void QucsApp::openProject(const QString& Path)
 {
+  // this will also remove the path from recent projects if the directory doesn't exist.
+  updateRecentProjectsList(Path);
+
   slotHideEdit(); // disable text edit of component property
 
   QDir ProjDir(QDir::cleanPath(Path)); // the full path
@@ -1655,7 +1704,7 @@ void QucsApp::slotTextNew()
 // --------------------------------------------------------------
 // Changes to the document "Name". If already open then it goes to it
 // directly, otherwise it loads it.
-bool QucsApp::gotoPage(const QString& Name)
+bool QucsApp::gotoPage(const QString& Name, bool reloadPage)
 {
   int No = DocumentTab->currentIndex();
 
@@ -1665,6 +1714,19 @@ bool QucsApp::gotoPage(const QString& Name)
   if(d) {   // open page found ?
     d->becomeCurrent(true);
     DocumentTab->setCurrentIndex(i);  // make new document the current
+    // if reloadPage is set AND it's a textDocument AND it has changed on disk -> reload
+    if (reloadPage) {
+      QWidget *w = DocumentTab->currentWidget();
+      if (isTextDocument(w)) {
+        TextDoc *tDoc = dynamic_cast<TextDoc*>(w);
+        if (tDoc->hasFileChangedOnDisk()) {
+          if(!tDoc -> reload()) {
+            return false;
+          }
+          qDebug() << "Successfully reloaded textDocument";
+        }
+      }
+    }
     return true;
   }
 
@@ -1935,7 +1997,7 @@ void QucsApp::slotFileSaveAll()
 
   int No=0;
   QucsDoc *Doc;  // search, if page is already loaded
-  while((Doc=getDoc(No++)) != 0) {
+  while((Doc=getDoc(No++)) != nullptr) {
     if(Doc->getDocName().isEmpty())  // make document the current ?
       DocumentTab->setCurrentIndex(No-1);
     if (saveFile(Doc)) { // Hack! TODO: Maybe it's better to let slotFileChanged()
@@ -2012,30 +2074,87 @@ void QucsApp::closeFile(int index)
 }
 
 
-// --------------------------------------------------------------
-bool QucsApp::closeAllFiles()
+bool QucsApp::closeAllFiles(int exceptTab)
 {
+  if (DocumentTab->count() == 0) {
+    return true;  // no documents to close
+  }
+
+  // Use closeTabsRange to close all tabs (from 0 to last tab)
+  bool result = closeTabsRange(0, DocumentTab->count() - 1, exceptTab);
+
+  if (result) {
+    switchEditMode(true);   // set schematic edit mode
+  }
+  return result;
+}
+
+
+/**
+ * @brief close Tabs in a specified range, optionally skipping a specified one
+ * @param startTab first tab to be closed
+ * @param stoptTab last tab to be closed
+ * @param exceptTab tab to leave open, none if not specified
+ */
+bool QucsApp::closeTabsRange(int startTab, int stopTab, int exceptTab)
+{
+  if (stopTab < startTab)
+    return false;
+  // document to keep open, if any
+  QucsDoc *docToKeep = nullptr;
+  if (exceptTab >= 0) {
+    docToKeep = getDoc(exceptTab);
+  }
+
   SaveDialog *sd = new SaveDialog(this);
   sd->setApp(this);
-  for(int i=0; i < DocumentTab->count(); ++i) {
+  Q_ASSERT(startTab >= 0);
+  Q_ASSERT(stopTab < DocumentTab->count());
+
+  for(int i=startTab; i <= stopTab; ++i) {
     QucsDoc *doc = getDoc(i);
-    if(doc->getDocChanged())
+    if ((doc->getDocChanged()) && (doc != docToKeep))
       sd->addUnsavedDoc(doc);
   }
   int Result = SaveDialog::DontSave;
   if(!sd->isEmpty())
-     Result = sd->exec();
+    Result = sd->exec();
   delete sd;
   if(Result == SaveDialog::AbortClosing)
     return false;
-  QucsDoc *doc = 0;
-  while((doc = getDoc()) != 0)
-  delete doc;
+  // remove documents
+  QucsDoc *doc = nullptr;
+  QucsDoc *stopDoc = getDoc(stopTab);
+  int i = 0;
+  do {
+    doc = getDoc(startTab+i);
+    if (doc == docToKeep) {
+      i++; // skip to next doc
+    } else {
+      delete doc;
+    }
+  } while (doc != stopDoc);
 
-
-  //switchEditMode(true);   // set schematic edit mode
   return true;
 }
+/**
+ * @brief close all documents to the left of the specified one
+ * @param index reference tab
+ */
+bool QucsApp::closeAllLeft(int index)
+{
+  return closeTabsRange(0, index-1);
+}
+
+/**
+ * @brief close all documents to the right of the specified one
+ * @param index reference tab
+ */
+bool QucsApp::closeAllRight(int index)
+{
+  return closeTabsRange(index+1, DocumentTab->count()-1);
+}
+
 
 void QucsApp::slotFileExamples() {
   statusBar()->showMessage(tr("Open example…"));
@@ -2083,7 +2202,7 @@ void QucsApp::slotChangeView()
   QWidget *w = DocumentTab->currentWidget();
   editText->setHidden (true); // disable text edit of component property
   QucsDoc * Doc;
-  if(w==NULL)return;
+  if(w==nullptr)return;
   // for text documents
   if (isTextDocument (w)) {
     TextDoc *d = (TextDoc*)w;
@@ -2207,26 +2326,30 @@ void QucsApp::updatePortNumber(QucsDoc *currDoc, int No)
   // update all occurencies of subcircuit in all open documents
   No = 0;
   QWidget *w;
-  Component *pc_tmp;
-  while((w=DocumentTab->widget(No++)) != 0) {
+
+  const auto needToRecreate = [&Model, &Name, &pathName](const Component* c) {
+    if (c->Model != Model) return false;
+    auto file = c->Props.front()->Value;
+    return file == pathName || file == Name;
+  };
+
+  while((w=DocumentTab->widget(No++)) != nullptr) {
     if(isTextDocument (w))  continue;
 
-    // start from the last to omit re-appended components
-    Schematic *Doc = (Schematic*)w;
-    for(Component *pc=Doc->a_Components->last(); pc!=0; ) {
-      if(pc->Model == Model) {
-        File = pc->Props.front()->Value;
-        if((File == pathName) || (File == Name)) {
-          pc_tmp = Doc->a_Components->prev();
-          Doc->recreateComponent(pc);  // delete and re-append component
-          if(!pc_tmp)  break;
-          Doc->a_Components->findRef(pc_tmp);
-          pc = Doc->a_Components->current();
-          continue;
-        }
-      }
-      pc = Doc->a_Components->prev();
-    }
+    Schematic* Doc = dynamic_cast<Schematic*>(w);
+    assert(Doc != nullptr);
+
+    // Possibly there are components which need to be recreated by calling
+    // Schematic::recreateComponent on them. But there is a pitfall: invocation
+    // of Schematic::recreateComponent removes the component from the list
+    // of components, thus invalidating iterators to it. Because of that,
+    // recreateComponent cannot be invoked while iterating over the list
+    // of components. To circumvent this, pointers to relevant components are
+    // copied to a separate container.
+    // This is a nasty abstraction leak which has to be fixed somehow.
+    std::vector<Component*> to_recreate;
+    std::ranges::copy_if((*Doc->a_Components), std::back_inserter(to_recreate), needToRecreate);
+    std::ranges::for_each(to_recreate, [Doc](Component* c) { Doc->recreateComponent(c); });
   }
 }
 
@@ -2332,7 +2455,7 @@ void QucsApp::slotIntoHierarchy()
 
   Schematic *Doc = (Schematic*)DocumentTab->currentWidget();
   Component *pc = Doc->searchSelSubcircuit();
-  if(pc == 0) { return; }
+  if(pc == nullptr) { return; }
 
   QString s = pc->getSubcircuitFile();
   if(!gotoPage(s)) { return; }
@@ -2416,7 +2539,7 @@ void QucsApp::slotTune(bool checked)
         bool found = false;
         bool digi_found = false;
         bool exit = false;
-        for(Component *pc = d->a_DocComps.first(); pc != 0; pc = d->a_DocComps.next()) {
+        for (Component* pc : d->a_DocComps) {
             if (pc->isSimulation) {
                 found = true;
             }
@@ -2434,7 +2557,7 @@ void QucsApp::slotTune(bool checked)
             QMessageBox::warning(this,tr("Error"),tr("Tuning not possible for digital simulation. "
                                                      "Only analog simulation supported."));
         }
-        if (d->a_Diagrams->isEmpty() && !d->getSimOpenDpl()) {
+        if (d->a_Diagrams->empty() && !d->getSimOpenDpl()) {
             QMessageBox::warning(this,tr("Error"),tr("Tuning has no effect without diagrams. "
                                                      "Add at least one diagram on schematic."));
             exit = true;
@@ -2459,7 +2582,7 @@ void QucsApp::slotTune(bool checked)
         simulateToolbar->setEnabled(false); // disable workToolbar to preserve TuneMouseAction
 
         MousePressAction = &MouseActions::MPressTune;
-        MouseReleaseAction = 0; //While Tune is active release is not needed. This puts Press Action back to normal select
+        MouseReleaseAction = nullptr; //While Tune is active release is not needed. This puts Press Action back to normal select
 
         tunerDia->show();
     }
@@ -2638,7 +2761,7 @@ void QucsApp::slotAfterSimulation(int Status, SimMessage *sim)
 
   int i=0;
   QWidget *w;  // search, if page is still open
-  while((w=DocumentTab->widget(i++)) != 0)
+  while((w=DocumentTab->widget(i++)) != nullptr)
     if(w == sim->DocWidget)
       break;
 
@@ -2792,65 +2915,117 @@ void QucsApp::slotOpenContent(const QModelIndex &idx)
 {
   editText->setHidden(true); // disable text edit of component property
 
-  //test the item is valid
-  if (!idx.isValid()) { return; }
-  if (!idx.parent().isValid()) { return; }
+  // Get the selection model
+  QItemSelectionModel *selectionModel = Content->selectionModel();
+
+  // Handle multiple selections if CTRL is pressed or from context menu
+  // OR if Shift is pressed during double click
+  if ((QApplication::keyboardModifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) ||
+      (sender() == ActionCMenuOpen && selectionModel->hasSelection())) {
+
+    QModelIndexList selected = selectionModel->selectedIndexes();
+    QSet<QString> openedFiles; // To avoid opening duplicates
+
+     // We only want column 0 items (file names)
+    for (const QModelIndex &index : selected) {
+      if (index.column() == 0 && index.parent().isValid()) {
+        QString filename = index.sibling(index.row(), 0).data().toString();
+        QString note = index.sibling(index.row(), 1).data().toString();
+        QFileInfo Info(QucsSettings.QucsWorkDir.filePath(filename));
+
+        // Only open each file once
+        if (!openedFiles.contains(Info.absoluteFilePath())) {
+          openFileFromProjectView(Info, note);
+          openedFiles.insert(Info.absoluteFilePath());
+        }
+      }
+    }
+    return;
+  }
+
+  if (!idx.isValid() || !idx.parent().isValid()) {
+    return;
+  }
 
   QString filename = idx.sibling(idx.row(), 0).data().toString();
   QString note = idx.sibling(idx.row(), 1).data().toString();
   QFileInfo Info(QucsSettings.QucsWorkDir.filePath(filename));
-  QString extName = Info.suffix();
+  openFileFromProjectView(Info, note);
+}
 
+/**
+ * Opens a file from the project view based on its file type
+ * @param Info - QFileInfo object containing file information
+ * @param note - Optional note from the project view (used for subcircuits)
+ */
+void QucsApp::openFileFromProjectView(const QFileInfo &Info, const QString &note)
+{
+  QString extName = Info.suffix().toLower();
+  QString absolutePath = Info.absoluteFilePath();
+
+   // Handle Qucs document types
   if (extName == "sch" || extName == "dpl" || extName == "vhdl" ||
       extName == "vhd" || extName == "v" || extName == "va" ||
-      extName == "m" || extName == "oct") {
-    gotoPage(Info.absoluteFilePath());
-    updateRecentFilesList(Info.absoluteFilePath());
+      extName == "m" || extName == "oct" || extName == "net") {
+
+    gotoPage(absolutePath);
+    updateRecentFilesList(absolutePath);
     slotUpdateRecentFiles();
 
-    if(note.isEmpty())     // is subcircuit ?
-      if(extName == "sch") return;
+    // Special handling for subcircuits
+    if (note.isEmpty() && extName == "sch") {
+      return;
+    }
 
-    select->blockSignals(true);  // switch on the 'select' action ...
+    // Set selection mode if not in subcircuit
+    select->blockSignals(true);
     select->setChecked(true);
     select->blockSignals(false);
 
     activeAction = select;
-    MouseMoveAction = 0;
+    MouseMoveAction = nullptr;
     MousePressAction = &MouseActions::MPressSelect;
     MouseReleaseAction = &MouseActions::MReleaseSelect;
     MouseDoubleClickAction = &MouseActions::MDoubleClickSelect;
     return;
   }
 
-  if(extName == "dat") {
-    editFile(Info.absoluteFilePath());  // open datasets with text editor
+  // Handle data files
+  if (extName == "dat") {
+    editFile(absolutePath);
     return;
   }
 
-  // File is no Qucs file, so go through list and search a user
-  // defined program to open it.
+  // Handle S-parameter files
+  if (extName == "s1p" || extName == "s2p" || extName == "s3p" || extName == "s4p") {
+    QStringList args;
+    args << absolutePath;
+    launchTool(QUCS_NAME "spar-viewer", "s-parameter viewer", args);
+    return;
+  }
+
+  // Try to find a user-defined program for the file extension
   QStringList com;
   QStringList::const_iterator it = QucsSettings.FileTypes.constBegin();
-  while(it != QucsSettings.FileTypes.constEnd()) {
-    if(extName == (*it).section('/',0,0)) {
-      QString progName = (*it).section('/',1,1);
+  while (it != QucsSettings.FileTypes.constEnd()) {
+    if (extName == (*it).section('/', 0, 0)) {
+      QString progName = (*it).section('/', 1, 1);
       com = progName.split(" ");
-      com << Info.absoluteFilePath();
+      com << absolutePath;
 
       QProcess *Program = new QProcess();
-      //Program->setCommunication(0);
       QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-      env.insert("PATH", env.value("PATH") );
+      env.insert("PATH", env.value("PATH"));
       Program->setProcessEnvironment(env);
       QString cmd = com.at(0);
       QStringList com_args = com;
       com_args.removeAt(0);
       Program->start(cmd, com_args);
-      if(Program->state()!=QProcess::Running&&
-              Program->state()!=QProcess::Starting) {
+
+      if (Program->state() != QProcess::Running &&
+          Program->state() != QProcess::Starting) {
         QMessageBox::critical(this, tr("Error"),
-               tr("Cannot start \"%1\"!").arg(Info.absoluteFilePath()));
+                              tr("Cannot start \"%1\"!").arg(absolutePath));
         delete Program;
       }
       return;
@@ -2858,9 +3033,15 @@ void QucsApp::slotOpenContent(const QModelIndex &idx)
     it++;
   }
 
-  // If no appropriate program was found, open as text file.
-  editFile(Info.absoluteFilePath());  // open datasets with text editor
+         // Fallback to system default handler
+  QUrl fileUrl = QUrl::fromLocalFile(absolutePath);
+  if (!QDesktopServices::openUrl(fileUrl)) {
+    // If system handler fails, try opening as text file
+    editFile(absolutePath);
+  }
 }
+
+
 
 // ---------------------------------------------------------
 // Is called when the mouse is clicked within the Content QListView.
@@ -2899,8 +3080,8 @@ void QucsApp::slotSelectSubcircuit(const QModelIndex &idx)
   if (filename == tab_titl ) return; // Forbid to paste subcircuit into itself.
 
   // delete previously selected elements
-  if(view->selElem != 0)  delete view->selElem;
-  view->selElem = 0;
+  if(view->selElem != nullptr)  delete view->selElem;
+  view->selElem = nullptr;
 
   // toggle last toolbar button off
   if(activeAction) {
@@ -2908,7 +3089,7 @@ void QucsApp::slotSelectSubcircuit(const QModelIndex &idx)
     activeAction->setChecked(false);       // set last toolbar button off
     activeAction->blockSignals(false);
   }
-  activeAction = 0;
+  activeAction = nullptr;
 
   Component *Comp;
   if(isVHDL)
@@ -2918,13 +3099,13 @@ void QucsApp::slotSelectSubcircuit(const QModelIndex &idx)
   else
     Comp = new Subcircuit();
   Comp->Props.first()->Value = idx.sibling(idx.row(), 0).data().toString();
-  Comp->recreate(0);
+  Comp->recreate();
   view->selElem = Comp;
 
   MouseMoveAction = &MouseActions::MMoveElement;
   MousePressAction = &MouseActions::MPressElement;
-  MouseReleaseAction = 0;
-  MouseDoubleClickAction = 0;
+  MouseReleaseAction = nullptr;
+  MouseDoubleClickAction = nullptr;
 }
 
 // ---------------------------------------------------------
@@ -2939,7 +3120,7 @@ void QucsApp::slotSelectLibComponent(QTreeWidgetItem *item)
     {
         // if there's not a higher level item, this is a top level item,
         // not a component item so return
-        if(item->parent() == 0) return;
+        if(item->parent() == nullptr) return;
         if(item->text(1).isEmpty()) return;   // return, if not a subcircuit
 
         // copy the subcircuit schematic to the clipboard
@@ -3018,7 +3199,7 @@ void QucsApp::switchSchematicDoc (bool SchematicMode)
   }
   // schematic document
   else {
-    MouseMoveAction = 0;
+    MouseMoveAction = nullptr;
     MousePressAction = &MouseActions::MPressSelect;
     MouseReleaseAction = &MouseActions::MReleaseSelect;
     MouseDoubleClickAction = &MouseActions::MDoubleClickSelect;
@@ -3436,6 +3617,27 @@ void QucsApp::updateRecentFilesList(QString s)
   slotUpdateRecentFiles();
 }
 
+void QucsApp::updateRecentProjectsList()
+{
+  QSettings* settings = new QSettings("qucs","qucs_s");
+  settings->setValue("RecentProjects",QucsSettings.RecentProjects.join("*"));
+  delete settings;
+  slotUpdateRecentProjects();
+}
+
+void QucsApp::updateRecentProjectsList(QString pathToProj)
+{
+  QSettings* settings = new QSettings("qucs","qucs_s");
+  QucsSettings.RecentProjects.removeAll(pathToProj);
+  QucsSettings.RecentProjects.prepend(pathToProj);
+  if (QucsSettings.RecentProjects.size() > MaxRecentFiles) {
+    QucsSettings.RecentProjects.removeLast();
+  }
+  settings->setValue("RecentProjects",QucsSettings.RecentProjects.join("*"));
+  delete settings;
+  slotUpdateRecentProjects();
+}
+
 void QucsApp::slotSaveDiagramToGraphicsFile()
 {
   slotSaveSchematicToGraphicsFile(true);
@@ -3543,6 +3745,12 @@ void QucsApp::slotSaveNetlist()
     }
 }
 
+void QucsApp::slotCdlSettings()
+{
+    std::unique_ptr<CdlSettingsDialog> dlg(new CdlSettingsDialog(this));
+    dlg->exec();
+}
+
 void QucsApp::slotSaveCdlNetlist()
 {
     if (!isTextDocument(DocumentTab->currentWidget()))
@@ -3555,7 +3763,7 @@ void QucsApp::slotSaveCdlNetlist()
             QString netlistString;
             {
                 QTextStream netlistStream(&netlistString);
-                CdlNetlistWriter cdlWriter(netlistStream, schematic);
+                CdlNetlistWriter cdlWriter(netlistStream, schematic, QucsSettings.ResolveSpicePrefix);
                 if (!cdlWriter.write())
                 {
                     QMessageBox::critical(
@@ -3586,7 +3794,7 @@ void QucsApp::slotSaveCdlNetlist()
             if (netlistFile.open(QIODevice::WriteOnly))
             {
                 QTextStream netlistStream(&netlistFile);
-                CdlNetlistWriter cdlWriter(netlistStream, schematic);
+                CdlNetlistWriter cdlWriter(netlistStream, schematic, QucsSettings.ResolveSpicePrefix);
                 if (!cdlWriter.write())
                 {
                     QMessageBox::critical(
@@ -3732,6 +3940,33 @@ void QucsApp::slotSearchLibClear()
     slotSearchLibComponent("");
 }
 
+// Close all documents except the current one
+void QucsApp::slotFileCloseOthers()
+{
+  closeAllFiles(DocumentTab->currentIndex());
+}
+
+// Close all documents to the left of the current one
+void QucsApp::slotFileCloseAllLeft()
+{
+  closeAllLeft(DocumentTab->currentIndex());
+}
+
+// Close all documents to the right of the current one
+void QucsApp::slotFileCloseAllRight()
+{
+  closeAllRight(DocumentTab->currentIndex());
+}
+
+// Close all documents
+void QucsApp::slotFileCloseAll()
+{
+  // close all tabs
+  closeAllFiles();
+  // create empty schematic
+  slotFileNew();
+}
+
 QVariant QucsFileSystemModel::data( const QModelIndex& index, int role ) const
 {
     if (role == Qt::DecorationRole) { // it's an icon
@@ -3784,4 +4019,94 @@ bool QucsSortFilterProxyModel::lessThan(const QModelIndex &left, const QModelInd
     }
 
     return QSortFilterProxyModel::lessThan(left, right);
+}
+
+ContextMenuTabWidget::ContextMenuTabWidget(QucsApp *parent) : QTabWidget(parent)
+{
+  App = parent;
+  setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(this, SIGNAL(customContextMenuRequested(const QPoint&)), this, SLOT(showContextMenu(const QPoint&)));
+}
+
+void ContextMenuTabWidget::showContextMenu(const QPoint& point)
+{
+  if (point.isNull()) {
+    qDebug() << "ContextMenuTabWidget::showContextMenu() : point is null!";
+    return;
+  }
+
+  contextTabIndex = tabBar()->tabAt(point);
+  qDebug() << "contextTabIndex =" << contextTabIndex;
+  if (contextTabIndex >= 0) { // clicked over a tab
+    QMenu menu(this);
+
+#define APPEND_MENU(action, slot, text)         \
+    {                                           \
+          QAction *action = new QAction(tr(text), &menu);    \
+          connect(action, SIGNAL(triggered()), SLOT(slot())); \
+          menu.addAction(action); \
+    }
+
+    APPEND_MENU(ActionCxMenuClose, slotCxMenuClose, "Close")
+    APPEND_MENU(ActionCxMenuCloseOthers, slotCxMenuCloseOthers, "Close all but this")
+    APPEND_MENU(ActionCxMenuCloseOthers, slotCxMenuCloseLeft, "Close all to the left")
+    APPEND_MENU(ActionCxMenuCloseOthers, slotCxMenuCloseRight, "Close all to the right")
+    APPEND_MENU(ActionCxMenuCloseAll, slotCxMenuCloseAll, "Close all")
+    menu.addSeparator();
+    APPEND_MENU(ActionCxMenuCopyPath, slotCxMenuCopyPath, "Copy full path")
+    APPEND_MENU(ActionCxMenuOpenFolder, slotCxMenuOpenFolder, "Open containing folder")
+#undef APPEND_MENU
+
+    menu.exec(tabBar()->mapToGlobal(point));
+  }
+}
+
+void ContextMenuTabWidget::slotCxMenuClose()
+{
+  // close tab where the context menu was opened
+  App->slotFileClose(contextTabIndex);
+}
+
+void ContextMenuTabWidget::slotCxMenuCloseOthers()
+{
+  // close all tabs, except the one where the context menu was opened
+  App->closeAllFiles(contextTabIndex);
+}
+
+void ContextMenuTabWidget::slotCxMenuCloseLeft()
+{
+  // close all tabs to the left of the current one
+  App->closeAllLeft(contextTabIndex);
+}
+
+void ContextMenuTabWidget::slotCxMenuCloseRight()
+{
+  // close all tabs to the right of the current one
+  App->closeAllRight(contextTabIndex);
+}
+
+void ContextMenuTabWidget::slotCxMenuCloseAll()
+{
+  App->slotFileCloseAll();
+}
+
+void ContextMenuTabWidget::slotCxMenuCopyPath()
+{
+  // get the document where the context menu was opened
+  QucsDoc *d = App->getDoc(contextTabIndex);
+  // copy the document full path to the clipboard
+  QClipboard *cb = QApplication::clipboard();
+  cb->setText(d->getDocName());
+}
+
+void ContextMenuTabWidget::slotCxMenuOpenFolder()
+{
+  // get the document where the context menu was opened
+  QucsDoc *d = App->getDoc(contextTabIndex);
+  QString dName = d->getDocName();
+  // a not-yet-saved document does not have a DocName
+  if (!dName.isEmpty()) {
+    QFileInfo Info(dName);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(Info.canonicalPath()));
+  }
 }

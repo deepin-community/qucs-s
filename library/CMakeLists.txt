@@ -16,6 +16,9 @@ Digital_HC.lib
 Digital_LV.lib
 Digital_XSPICE.lib
 DualGateMOSFET.lib
+FerritesEpcos.lib
+FerritesFerroxcube.lib
+FerritesAmidon.lib
 GeDiodes.lib
 Ideal.lib
 JFETs.lib
@@ -54,6 +57,8 @@ PIN_Diodes.lib
 VoltageComparators.lib
 VoltageReferences.lib
 VoltageRegulators.lib
+VDMOS.lib
+VDMOS_IR.lib
 )
 
 SET(BLACKLIST
@@ -67,6 +72,7 @@ INSTALL( DIRECTORY "symbols" DESTINATION share/${QUCS_NAME}/ )
 INSTALL( DIRECTORY "TubesExtended" DESTINATION share/${QUCS_NAME}/library)
 INSTALL( DIRECTORY "Optocoupler" DESTINATION share/${QUCS_NAME}/library )
 INSTALL( DIRECTORY "DualGateMOSFET" DESTINATION share/${QUCS_NAME}/library )
+INSTALL( DIRECTORY "spicelibrary" DESTINATION share/${QUCS_NAME}/ )
 
 ADD_SUBDIRECTORY( XyceDigital)
 

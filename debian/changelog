@@ -1,10 +1,16 @@
-qucs-s (25.1.2-1deepin2) unstable; urgency=medium
+qucs-s (25.2.0-0deepin1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- lhdjply <lhdjply@126.com>  Wed, 10 Sep 2025 15:01:22 +0800
+
+qucs-s (25.1.2-0deepin2) unstable; urgency=medium
 
   * use the official theme
 
  -- lhdjply <lhdjply@126.com>  Mon, 26 May 2025 09:49:58 +0800
 
-qucs-s (25.1.2-1deepin1) unstable; urgency=medium
+qucs-s (25.1.2-0deepin1) unstable; urgency=medium
 
   * New upstream release.
 

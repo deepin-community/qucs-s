@@ -58,6 +58,7 @@ struct tQucsSettings {
   QString BinDir;
   QString LangDir;
   QString LibDir;
+  QString SpiceLibDir;
   QString OctaveDir;  // m-files location
   QString ExamplesDir;
   QString DocDir;
@@ -87,6 +88,7 @@ struct tQucsSettings {
   QString OctaveExecutable; // OctaveExecutable location
   QString QucsOctave; // OUCS_OCTAVE variable
   QString RFLayoutExecutable;
+  bool ResolveSpicePrefix;
 
   // registered filename extensions with program to open the file
   QStringList FileTypes;
@@ -97,12 +99,15 @@ struct tQucsSettings {
   unsigned int numRecentDocs;
   QStringList RecentDocs;
 
+  QStringList RecentProjects;
+
   bool IgnoreFutureVersion;
   bool GraphAntiAliasing;
   bool TextAntiAliasing;
 
   bool hasDarkTheme;
   bool fullTraceName;
+  bool alwaysPrefixDataset;
 
   bool firstRun;
 };

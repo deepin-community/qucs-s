@@ -27,6 +27,7 @@
 #include <QList>
 
 #include "element.h"
+#include "property.h"
 
 
 class Schematic;
@@ -40,7 +41,7 @@ public:
   virtual ~Component() {};
 
   virtual Component* newOne();
-  virtual void recreate(Schematic*) {};
+  virtual void recreate() {};
   QString getNetlist();
   QString getSpiceNetlist(spicecompat::SpiceDialect dialect = spicecompat::SPICEDefault);
   QString getVerilogACode();
@@ -59,17 +60,15 @@ public:
   QString get_VHDL_Code(int);
   QString get_Verilog_Code(int);
   void    paint(QPainter* painter);
-  void    paintScheme(Schematic*);
-  void    setCenter(int, int, bool relative=false);
-  void    getCenter(int&, int&);
-  int     textSize(int&, int&);
-  void    Bounding(int&, int&, int&, int&);
-  void    entireBounds(int&, int&, int&, int&);
-  bool    getSelected(int, int);
+  void    paintScheme(Schematic*) override;
+  int     textSize(int&, int&) const;
+  QRect   boundingRect() const noexcept override;
+  QRect   boundingRectIncludingProperties() const noexcept;
+  bool    getSelected(int x, int y) const { return boundingRect().contains(x, y); }
   int     getTextSelected(int, int);
-  void    rotate();
-  void    mirrorX();  // mirror about X axis
-  void    mirrorY();  // mirror about Y axis
+  bool    rotate() noexcept override;
+  bool    mirrorX() noexcept override;
+  bool    mirrorY() noexcept override;
   QString save();
   bool    load(const QString&);
 
@@ -132,6 +131,7 @@ protected:
   Schematic* containingSchematic;
 
   virtual void drawSymbol(QPainter* p);
+  QString getSpiceSubstrateLine(); // get SPICE params for microstrips
 };
 
 
@@ -140,7 +140,7 @@ public:
   MultiViewComponent() {};
   virtual ~MultiViewComponent() {};
 
-  void recreate(Schematic*);
+  void recreate();
 
 protected:
   virtual void createSymbol() {};
@@ -160,6 +160,6 @@ protected:
 };
 
 // prototype of independent function
-Component* getComponentFromName(QString& Line, Schematic* p=NULL);
+Component* getComponentFromName(QString& Line, Schematic* p=nullptr);
 
 #endif

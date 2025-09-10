@@ -26,6 +26,7 @@
 #include "main.h"
 #include "schematic.h"
 #include "module.h"
+#include "node.h"
 #include "misc.h"
 
 #include <QPen>
@@ -65,7 +66,7 @@ Component::Component() {
     ty = 0;
 
 
-    containingSchematic = NULL;
+    containingSchematic = nullptr;
 }
 
 // -------------------------------------------------------
@@ -74,16 +75,8 @@ Component *Component::newOne() {
 }
 
 // -------------------------------------------------------
-void Component::Bounding(int &_x1, int &_y1, int &_x2, int &_y2) {
-    _x1 = x1 + cx;
-    _y1 = y1 + cy;
-    _x2 = x2 + cx;
-    _y2 = y2 + cy;
-}
-
-// -------------------------------------------------------
 // Size of component text.
-int Component::textSize(int &textPropertyMaxWidth, int &totalTextPropertiesHeight) {
+int Component::textSize(int &textPropertyMaxWidth, int &totalTextPropertiesHeight) const {
     // get size of text using the screen-compatible metric
     QFontMetrics metrics(QucsSettings.font, 0);
     int textPropertiesCount = 0;
@@ -112,36 +105,19 @@ int Component::textSize(int &textPropertyMaxWidth, int &totalTextPropertiesHeigh
     return textPropertiesCount;
 }
 
-// -------------------------------------------------------
-// Boundings including the component text.
-void Component::entireBounds(int& boundingRectLeft, int& boundingRectTop,
-                             int& boundingRectRight, int& boundingRectBottom) {
-    boundingRectLeft = std::min(x1, tx) + cx;
-    boundingRectTop  = std::min(y1, ty) + cy;
+QRect Component::boundingRect() const noexcept {
+    return QRect{x1, y1, x2 - x1, y2 - y1}
+        .normalized()
+        .translated(center());
+}
 
+QRect Component::boundingRectIncludingProperties() const noexcept {
     int textPropertyMaxWidth, totalTextPropertiesHeight;
     textSize(textPropertyMaxWidth, totalTextPropertiesHeight);
-
-    boundingRectRight  = std::max(tx + textPropertyMaxWidth, x2) + cx;
-    boundingRectBottom = std::max(ty + totalTextPropertiesHeight, y2) + cy;
-}
-
-// -------------------------------------------------------
-void Component::setCenter(int x, int y, bool relative) {
-    if (relative) {
-        cx += x;
-        cy += y;
-    }
-    else {
-        cx = x;
-        cy = y;
-    }
-}
-
-// -------------------------------------------------------
-void Component::getCenter(int &x, int &y) {
-    x = cx;
-    y = cy;
+    return QRect{tx, ty, textPropertyMaxWidth, totalTextPropertiesHeight}
+        .translated(center())
+        .united(boundingRect())
+        .normalized();
 }
 
 // Given coordinates of a point (usually coming from a mouse click), finds
@@ -229,19 +205,6 @@ int Component::getTextSelected(int point_x, int point_y) {
     return -1;
 }
 
-// -------------------------------------------------------
-bool Component::getSelected(int x_, int y_) {
-    x_ -= cx;
-    y_ -= cy;
-    if (x_ >= x1)
-        if (x_ <= x2)
-            if (y_ >= y1)
-                if (y_ <= y2)
-                    return true;
-
-    return false;
-}
-
 void Component::paint(QPainter *p) {
     p->save();
     p->translate(cx, cy);
@@ -257,6 +220,7 @@ void Component::paint(QPainter *p) {
 
     for (auto *prop : Props) {
         if (!prop->display) continue;
+        if ((prop->simulators & QucsSettings.DefaultSimulator) != QucsSettings.DefaultSimulator) continue;
         prop->paint(text_br.left(), text_br.bottom(), p);
         text_br = prop->boundingRect();
     }
@@ -384,41 +348,9 @@ void Component::paintIcon(QPixmap* pixmap) {
 void Component::paintScheme(Schematic *p) {
     // qDebug() << "paintScheme" << Model;
     if (Model.at(0) == '.' || isEquation) {   // is simulation component (dc, ac, ...) + Equations
-//        int a, b, xb, yb;
-//        QFont newFont = p->font();
-//
-//        float Scale =
-//                ((Schematic *) QucsMain->DocumentTab->currentWidget())->Scale;
-//        newFont.setPointSizeF(float(Scale) * QucsSettings.largeFontSize);
-//        newFont.setWeight(QFont::DemiBold);
-//        // here the font metric is already the screen metric, since the font
-//        // is the current font the painter is using
-//        QFontMetrics metrics(newFont);
-//
-//        a = b = 0;
-//        QSize r;
-//        for (Text *pt: Texts) {
-//            r = metrics.size(0, pt->s);
-//            b += r.height();
-//            if (a < r.width()) a = r.width();
-//        }
-//        xb = a + int(12.0 * Scale);
-//        yb = b + int(10.0 * Scale);
-//        x2 = x1 + 25 + int(float(a) / Scale);
-//        y2 = y1 + 23 + int(float(b) / Scale);
-//        if (ty < y2 + 1) if (ty > y1 - r.height()) ty = y2 + 1;
-//
-//        p->PostPaintEvent(_Rect, cx - 6, cy - 5, xb, yb);
-//        p->PostPaintEvent(_Line, cx - 1, cy + yb, cx - 6, cy + yb - 5);
-//        p->PostPaintEvent(_Line, cx + xb - 2, cy + yb, cx - 1, cy + yb);
-//        p->PostPaintEvent(_Line, cx + xb - 2, cy + yb, cx + xb - 6, cy + yb - 5);
-//        p->PostPaintEvent(_Line, cx + xb - 2, cy + yb, cx + xb - 2, cy);
-//        p->PostPaintEvent(_Line, cx + xb - 2, cy, cx + xb - 6, cy - 5);
 
-        int _x1, _x2, _y1, _y2;
-        // textCorr to entireBounds
-        entireBounds(_x1, _y1, _x2, _y2);
-        p->PostPaintEvent(_Rect, _x1, _y1, _x2 - _x1, _y2 - _y1);
+        auto br = boundingRect();
+        p->PostPaintEvent(_Rect, br.left(), br.top(), br.width(), br.height());
 
         return;
     }
@@ -457,11 +389,11 @@ void Component::paintScheme(Schematic *p) {
 
 // -------------------------------------------------------
 // Rotates the component 90 counter-clockwise around its center
-void Component::rotate() {
+bool Component::rotate() noexcept {
     // Port count only available after recreate, createSymbol
     if ((Model != "Sub") && (Model != "VHDL") && (Model != "Verilog")
         && (Model != "SpLib")) // skip port count
-        if (Ports.count() < 1) return;  // do not rotate components without ports
+        if (Ports.count() < 1) return false;  // do not rotate components without ports
     int tmp, dx, dy;
 
     // rotate all lines
@@ -563,21 +495,18 @@ void Component::rotate() {
     }
     else ty -= dx;
 
-    if (containingSchematic != nullptr) {
-        containingSchematic->setOnGrid(cx,cy);
-    }
-
     rotated++;  // keep track of what's done
     rotated &= 3;
+    return true;
 }
 
 // -------------------------------------------------------
 // Mirrors the component about the x-axis.
-void Component::mirrorX() {
+bool Component::mirrorX() noexcept {
     // Port count only available after recreate, createSymbol
     if ((Model != "Sub") && (Model != "VHDL") && (Model != "Verilog")
         && (Model != "SpLib")) // skip port count
-        if (Ports.count() < 1) return;  // do not rotate components without ports
+        if (Ports.count() < 1) return false;  // do not rotate components without ports
 
     // mirror all lines
     for (qucs::Line *p1: Lines) {
@@ -638,15 +567,16 @@ void Component::mirrorX() {
     mirroredX = !mirroredX;    // keep track of what's done
     rotated += rotated << 1;
     rotated &= 3;
+    return true;
 }
 
 // -------------------------------------------------------
 // Mirrors the component about the y-axis.
-void Component::mirrorY() {
+bool Component::mirrorY() noexcept {
     // Port count only available after recreate, createSymbol
     if ((Model != "Sub") && (Model != "VHDL") && (Model != "Verilog")
         && (Model != "SpLib")) // skip port count
-        if (Ports.count() < 1) return;  // do not rotate components without ports
+        if (Ports.count() < 1) return false;  // do not rotate components without ports
 
     // mirror all lines
     for (qucs::Line *p1: Lines) {
@@ -711,6 +641,7 @@ void Component::mirrorY() {
     rotated += rotated << 1;
     rotated += 2;
     rotated &= 3;
+    return true;
 }
 
 // -------------------------------------------------------
@@ -1209,10 +1140,11 @@ int Component::analyseLine(const QString &Row, int numProps) {
 
             pp++;
             if (pp == Props.end()) {
-                Props.append(new Property());
+                Props.append(new Property(
+                    "",
+                    s.section('=', 2, 2),
+                    (s.at(0) == '1')));
                 pp = --Props.end();
-                (*pp)->display = (s.at(0) == '1');
-                (*pp)->Value = s.section('=', 2, 2);
             }
 
             (*pp)->Name = s.section('=', 1, 1);
@@ -1423,7 +1355,7 @@ bool Component::getBrush(const QString &s, QBrush &Brush, int i) {
 }
 
 // ---------------------------------------------------------------------
-Property *Component::getProperty(const QString &name) {      
+Property *Component::getProperty(const QString &name) {
     for(auto pp = Props.begin(); pp != Props.end(); ++pp) {
       if((*pp)->Name == name) {
         return *pp;
@@ -1462,17 +1394,40 @@ void Component::copyComponent(Component *pc) {
 }
 
 
+QString Component::getSpiceSubstrateLine()
+{
+  QString s;
+  if (Props.count() < 1) return s;
+  if (Props.at(0)->Name != "Subst") return s;
+
+  Component *sub = nullptr;
+  QString subname = Props.at(0)->Value;
+  if (containingSchematic == nullptr) return s;
+  for(Component *pc: *containingSchematic->a_Components) {
+    if (pc->Name == subname) {
+      sub = pc;
+      break;
+    }
+  }
+
+  if (sub == nullptr) return s;
+
+  for(Property *pp: sub->Props) {
+    QString vv = spicecompat::normalize_value(pp->Value);
+    QString nn = pp->Name;
+    s += QString(" %1=%2 ").arg(nn.toLower()).arg(vv);
+  }
+
+  return s;
+}
+
+
 // ***********************************************************************
 // ********                                                       ********
 // ********          Functions of class MultiViewComponent        ********
 // ********                                                       ********
 // ***********************************************************************
-void MultiViewComponent::recreate(Schematic *Doc) {
-    if (Doc) {
-        Doc->a_Components->setAutoDelete(false);
-        Doc->deleteComp(this);
-    }
-
+void MultiViewComponent::recreate() {
     Ellipses.clear();
     Texts.clear();
     Ports.clear();
@@ -1494,11 +1449,6 @@ void MultiViewComponent::recreate(Schematic *Doc) {
 
     rotated = rrot;   // restore properties (were changed by rotate/mirror)
     mirroredX = mmir;
-
-    if (Doc) {
-        Doc->insertRawComponent(this);
-        Doc->a_Components->setAutoDelete(true);
-    }
 }
 
 
@@ -1770,7 +1720,7 @@ void GateComponent::createSymbol() {
 // ***********************************************************************
 
 Component *getComponentFromName(QString &Line, Schematic *p) {
-    Component *c = 0;
+    Component *c = nullptr;
 
     Line = Line.trimmed();
     if (Line.at(0) != '<') {
@@ -1829,7 +1779,7 @@ Component *getComponentFromName(QString &Line, Schematic *p) {
     cstr = c->Name;   // is perhaps changed in "recreate" (e.g. subcircuit)
     int x = c->tx, y = c->ty;
     c->setSchematic(p);
-    c->recreate(0);
+    c->recreate();
     c->Name = cstr;
     c->tx = x;
     c->ty = y;

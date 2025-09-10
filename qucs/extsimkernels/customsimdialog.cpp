@@ -20,6 +20,7 @@
 #include "main.h"
 #include "customsimdialog.h"
 #include "node.h"
+#include "wire.h"
 
 /*!
   \file customsimdialog.cpp
@@ -163,22 +164,22 @@ void CustomSimDialog::slotCancel()
 void CustomSimDialog::slotFindVars()
 {
     QStringList vars;
-    for(Node *pn = a_schematic->a_DocNodes.first(); pn != 0; pn = a_schematic->a_DocNodes.next()) {
-      if(pn->Label != 0) {
-          if (!vars.contains(pn->Label->Name)) {
-              vars.append(pn->Label->Name);
+    for (Node* pn : a_schematic->a_DocNodes) {
+      if(pn->hasLabel()) {
+          if (!vars.contains(pn->label()->Name)) {
+              vars.append(pn->label()->Name);
           }
       }
     }
-    for(Wire *pw = a_schematic->a_DocWires.first(); pw != 0; pw = a_schematic->a_DocWires.next()) {
-      if(pw->Label != 0) {
-          if (!vars.contains(pw->Label->Name)) {
-              vars.append(pw->Label->Name);
+    for (Wire* pw : a_schematic->a_DocWires) {
+      if(pw->hasLabel()) {
+          if (!vars.contains(pw->label()->Name)) {
+              vars.append(pw->label()->Name);
           }
       }
     }
 
-    for(Component *pc=a_schematic->a_DocComps.first();pc!=0;pc=a_schematic->a_DocComps.next()) {
+    for (Component* pc : a_schematic->a_DocComps) {
         if(pc->isProbe) {
             if (!vars.contains(pc->getProbeVariable())) {
                 vars.append(pc->getProbeVariable());

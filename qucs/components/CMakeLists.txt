@@ -62,6 +62,8 @@ taperedline.cpp
 circularloop.cpp
 spiralinductor.cpp
 simulation.cpp
+vdmos.cpp
+property.cpp
 )
 
 SET(COMPONENTS_HDRS
@@ -188,6 +190,7 @@ photodiode.h
 phototransistor.h
 pm_modulator.h
 potentiometer.h
+property.h
 rectline.h
 relais.h
 resistor.h
@@ -233,6 +236,7 @@ vpulse.h
 vrect.h
 circularloop.h
 spiralinductor.h
+vdmos.h
 )
 
 

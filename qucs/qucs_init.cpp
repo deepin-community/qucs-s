@@ -95,10 +95,30 @@ void QucsApp::initActions()
   fileClose->setWhatsThis(tr("Close File\n\nCloses the current document"));
   connect(fileClose, SIGNAL(triggered()), SLOT(slotFileClose()));
 
+  fileCloseOthers = new QAction(QIcon((":/bitmaps/fileclose.png")), tr("Close all but current"), this);
+  fileCloseOthers->setStatusTip(tr("Closes all documents except the current one"));
+  fileCloseOthers->setWhatsThis(tr("Close all but current\n\nCloses all documents except the current one"));
+  connect(fileCloseOthers, SIGNAL(triggered()), SLOT(slotFileCloseOthers()));
+
+  fileCloseAllLeft = new QAction(QIcon((":/bitmaps/fileclose.png")), tr("Close all left"), this);
+  fileCloseAllLeft->setStatusTip(tr("Closes all documents to the left of the current one"));
+  fileCloseAllLeft->setWhatsThis(tr("Close all left\n\nCloses all documents to the left of the current one"));
+  connect(fileCloseAllLeft, SIGNAL(triggered()), SLOT(slotFileCloseAllLeft()));
+
+  fileCloseAllRight = new QAction(QIcon((":/bitmaps/fileclose.png")), tr("Close all right"), this);
+  fileCloseAllRight->setStatusTip(tr("Closes all documents to the right of the current one"));
+  fileCloseAllRight->setWhatsThis(tr("Close all right\n\nCloses all documents to the right of the current one"));
+  connect(fileCloseAllRight, SIGNAL(triggered()), SLOT(slotFileCloseAllRight()));
+
+  fileCloseAll = new QAction(QIcon((":/bitmaps/fileclose.png")), tr("Close &All"), this);
+  fileCloseAll->setStatusTip(tr("Closes all documents"));
+  fileCloseAll->setWhatsThis(tr("Close All\n\nCloses all documents"));
+  connect(fileCloseAll, SIGNAL(triggered()), SLOT(slotFileCloseAll()));
+
   for (auto & i : fileRecentAction) {
     i = new QAction(this);
     i->setVisible(false);
-    connect(i, SIGNAL(triggered()), SLOT(slotOpenRecent()));
+    connect(i, SIGNAL(triggered()), SLOT(slotOpenRecentFile()));
   }
 
   fileClearRecent = new QAction(tr("Clear Recent"), this);
@@ -309,6 +329,16 @@ void QucsApp::initActions()
   projOpen->setStatusTip(tr("Opens an existing project"));
   projOpen->setWhatsThis(tr("Open Project\n\nOpens an existing project"));
   connect(projOpen, SIGNAL(triggered()), SLOT(slotMenuProjOpen()));
+
+  // initialise recent project actions
+  for (auto &action : projRecentActions) {
+    action = new QAction(this);
+    action->setVisible(false);
+    connect(action, SIGNAL(triggered()), SLOT(slotOpenRecentProject()));
+  }
+
+  projClearRecent = new QAction(tr("Clear recent"), this);
+  connect(projClearRecent, SIGNAL(triggered()), SLOT(slotClearRecentProjects()));
 
   projDel = new QAction(tr("&Delete Project..."), this);
   projDel->setShortcut(tr("Ctrl+Shift+D"));
@@ -582,6 +612,11 @@ void QucsApp::initActions()
   saveCdlNetlist->setWhatsThis(tr(QString::fromUtf8("Save CDL netlist to %1").arg(a_netlist2Console ? "console" : "file").toLatin1().constData()));
   connect(saveCdlNetlist, SIGNAL(triggered()), SLOT(slotSaveCdlNetlist()));
 
+  cdlSettings = new QAction(tr("CDL Settings..."), this);
+  cdlSettings->setStatusTip(tr("CDL Settings"));
+  cdlSettings->setWhatsThis(tr(QString::fromUtf8("CDL Settings").toLatin1().constData()));
+  connect(cdlSettings, SIGNAL(triggered()), SLOT(slotCdlSettings()));
+
   setMarker = new QAction(QIcon((":/bitmaps/svg/marker.svg")),	tr("Set Marker on Graph"), this);
   setMarker->setShortcut(Qt::CTRL|Qt::Key_B);
   setMarker->setStatusTip(tr("Sets a marker on a diagram's graph"));
@@ -675,7 +710,14 @@ void QucsApp::initMenuBar()
   fileMenu->addAction(textNew);
   fileMenu->addAction(symNew);
   fileMenu->addAction(fileOpen);
-  fileMenu->addAction(fileClose);
+
+  QMenu *closeFileMenu = new QMenu(tr("Close"), fileMenu);
+  closeFileMenu->addAction(fileClose);
+  closeFileMenu->addAction(fileCloseOthers);
+  closeFileMenu->addAction(fileCloseAllLeft);
+  closeFileMenu->addAction(fileCloseAllRight);
+  closeFileMenu->addAction(fileCloseAll);
+  fileMenu->addMenu(closeFileMenu);
 
   recentFilesMenu = new QMenu(tr("Open Recent"),fileMenu);
   fileMenu->addMenu(recentFilesMenu);
@@ -757,6 +799,17 @@ void QucsApp::initMenuBar()
   projMenu = new QMenu(tr("&Project"));  // menuBar entry projMenu
   projMenu->addAction(projNew);
   projMenu->addAction(projOpen);
+
+  recentProjMenu = new QMenu(tr("Open Recent"), projMenu);
+  projMenu->addMenu(recentProjMenu);
+
+  // Add recent project actions to recent project submenu
+  for (auto &action : projRecentActions) {
+    recentProjMenu->addAction(action);
+  }
+  recentProjMenu->addSeparator();
+  recentProjMenu->addAction(projClearRecent);
+
   projMenu->addAction(addToProj);
   projMenu->addAction(projClose);
   projMenu->addAction(projDel);
@@ -801,7 +854,10 @@ void QucsApp::initMenuBar()
   simMenu->addAction(showMsg);
   simMenu->addAction(showNet);
   simMenu->addAction(save_netlist);
+  simMenu->addSeparator();
   simMenu->addAction(saveCdlNetlist);
+  simMenu->addAction(cdlSettings);
+  simMenu->addSeparator();
   simMenu->addAction(simSettings);
 
 
