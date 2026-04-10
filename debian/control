@@ -24,7 +24,7 @@ Priority: optional
 Architecture: any
 Depends: 
  ${shlibs:Depends},
- ${misc:Depends}
-Recommends: ngspice
+ ${misc:Depends},
+ ngspice (>= 45)
 Description: Quite Universal Circuit Simulator with SPICE (Qucs-S)
  allows to simulate electronic circuits with SPICE-compatible kernels
