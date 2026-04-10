@@ -2,10 +2,11 @@ PROJECT(qucs-s-spar-viewer CXX C)
 CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
 cmake_policy(VERSION 3.10)
 
-SET(QUCS_NAME "qucs-s")
+SET(QUCS_NAME "qucs-s")      # Name of Qucs-S. This is needed to keep the QSettings on the same directory as Qucs-S
+SET(QUCS_S_VERSION "25.2.0") # Latest Qucs-S version
 
-# use top VERSION file
-file (STRINGS ${PROJECT_SOURCE_DIR}/../VERSION QUCS_VERSION)
+#use top VERSION file
+file (STRINGS ${PROJECT_SOURCE_DIR}/VERSION QUCS_VERSION)
 
 if(DEFINED CI_VERSION)
     set(PROJECT_VERSION "${CI_VERSION}")
@@ -16,7 +17,7 @@ endif()
 message(STATUS "Configuring ${PROJECT_NAME} (GUI): VERSION ${PROJECT_VERSION}")
 
 set(PROJECT_VENDOR "Qucs-S team. This program is licensed under the GNU GPL")
-set(PROJECT_COPYRIGHT_YEAR "2024")
+set(PROJECT_COPYRIGHT_YEAR "2026")
 set(PROJECT_DOMAIN_FIRST "qucs")
 set(PROJECT_DOMAIN_SECOND "org")
 
@@ -24,15 +25,16 @@ set(PROJECT_DOMAIN_SECOND "org")
 add_compile_definitions(HAVE_CONFIG_H)
 SET(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# configure the header config.h
+#configure the header config.h
 CONFIGURE_FILE (
-    "${PROJECT_SOURCE_DIR}/../config.h.cmake"
+    "${PROJECT_SOURCE_DIR}/config.h.cmake"
     "${PROJECT_BINARY_DIR}/config.h"
 )
 
+
 INCLUDE_DIRECTORIES("${PROJECT_BINARY_DIR}")
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Charts)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets PrintSupport)
 include_directories(
       ${Qt6Core_INCLUDE_DIRS}
       ${Qt6Gui_INCLUDE_DIRS}
@@ -40,7 +42,7 @@ include_directories(
       )
 
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Charts)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 include_directories(
       ${Qt6Core_INCLUDE_DIRS}
       ${Qt6Gui_INCLUDE_DIRS}
@@ -64,8 +66,12 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
         add_compile_definitions(_CRT_SECURE_NO_WARNINGS _SCL_SECURE_NO_WARNINGS)
         add_compile_options(/permissive- /Zc:__cplusplus /Zc:preprocessor /MP /Od /vmg)
         add_compile_options(/wd4244 /wd4267 /wd4312)
+        add_compile_options(/fsanitize=address)
+        add_link_options(/fsanitize=address)
     else()
         add_compile_options(-Wall -Wextra -O0 -g)
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
         if (CMAKE_CXX_COMPILER_ID MATCHES "^AppleClang$|^Clang$")
             add_compile_options(-Wno-ignored-attributes)
         endif()
@@ -83,13 +89,152 @@ endif()
 
 ADD_DEFINITIONS(${QT_DEFINITIONS})
 
-#ADD_SUBDIRECTORY( bitmaps ) -> added as resources
+file(GLOB SCHEMATIC_SOURCES
+     src/Schematic/*.cpp
+     src/Schematic/Export/*.cpp
+     src/Schematic/Export/QucsS/*.cpp
+     src/Schematic/Export/QucsS/Microstrip/*.cpp
+     src/Schematic/PaintingFunctions/*.cpp
+     src/Schematic/PaintingFunctions/Microstrip/*.cpp
+     src/Schematic/PaintingFunctions/IdealTransmissionLines/*.cpp
+)
 
-SET( spar_viewer_sources main.cpp qucs-s-spar-viewer.cpp codeeditor.cpp smithchartwidget.cpp rectangularplotwidget.cpp polarplotwidget.cpp matrixcombopopup.cpp)
+file(GLOB SCHEMATIC_HEADERS
+     src/Schematic/*.h
+)
 
-SET( spar_viewer_moc_headers qucs-s-spar-viewer.h codeeditor.h smithchartwidget.h rectangularplotwidget.h polarplotwidget.h matrixcombopopup.h)
+file(GLOB MISC_SOURCES
+     src/Misc/*.cpp
+)
 
-SET(RESOURCES qucs-s-spar-viewer.qrc)
+file(GLOB MISC_HEADERS
+     src/Misc/*.h
+)
+
+file(GLOB SPAR_SOURCES
+     src/SPAR/*.cpp
+)
+
+file(GLOB SPAR_HEADERS
+     src/SPAR/*.h
+)
+
+file(GLOB SPAR_SPECIAL_COMPONENTS
+    src/SPAR/SpecialComponents/*.cpp
+    src/SPAR/SpecialComponents/MicrostripComponents/*.cpp
+)
+
+
+file(GLOB UI_SOURCES
+     src/UI/*.cpp
+     src/UI/CustomWidgets/*.cpp
+)
+
+file(GLOB UI_HEADERS
+     src/UI/*.h
+     src/UI/CustomWidgets/*.h
+)
+
+file(GLOB PLOT_WIDGETS_SOURCES # Chart widgets (rectangular plot, Smith Chart, polar plot)
+     src/UI/PlotWidgets/*.cpp
+)
+
+file(GLOB PLOT_WIDGETS_HEADERS # Chart widgets (rectangular plot, Smith Chart, polar plot)
+     src/UI/PlotWidgets/*.h
+)
+
+file(GLOB QCUSTOMPLOT_SOURCE
+     src/UI/PlotWidgets/QCustomPlot/qcustomplot.cpp
+)
+
+file(GLOB QCUSTOMPLOT_HEADER
+     src/UI/PlotWidgets/QCustomPlot/qcustomplot.h
+)
+
+## TOOLS
+file(GLOB TOOLS_SOURCES
+     src/Tools/DesignTools/Filtering/*.cpp
+     src/Tools/DesignTools/Filtering/DirectCoupledFilters/*.cpp
+     src/Tools/DesignTools/PowerCombining/*.cpp
+     src/Tools/DesignTools/AttenuatorDesign/*.cpp
+     src/Tools/DesignTools/NetlistScratchPad/*.cpp
+     src/Tools/DesignTools/SimulationSetup/*.cpp
+     src/Tools/DesignTools/MatchingNetwork/*.cpp
+     src/Tools/DesignTools/TransmissionLineSynthesis/*.cpp
+)
+
+file(GLOB TOOLS_HEADERS
+     src/Tools/DesignTools/Filtering/*.h
+     src/Tools/DesignTools/Filtering/DirectCoupledFilters/*.h
+     src/Tools/DesignTools/PowerCombining/*.h
+     src/Tools/DesignTools/AttenuatorDesign/*.h
+     src/Tools/DesignTools/NetlistScratchPad/*.h
+     src/Tools/DesignTools/SimulationSetup/*.h
+     src/Tools/DesignTools/MatchingNetwork/*.h
+     src/Tools/DesignTools/TransmissionLineSynthesis/*.h
+)
+
+## CALCULATORS
+file(GLOB CALCULATORS_SOURCES
+    src/Tools/Calculators/RF/ReflectionCalculators/gamma_calculator/*.cpp
+    src/Tools/Calculators/RF/ReflectionCalculators/impedance_calculator/*.cpp
+    src/Tools/Calculators/RF/ReflectionCalculators/SWR_S11_calculator/*.cpp
+    src/Tools/Calculators/RF/OctaveBandwidthwCalculator/*.cpp
+    src/Tools/Calculators/RF/RFPowerConverter/*.cpp
+    src/Tools/Calculators/RF/FrequencyToWavelength/*.cpp
+    src/Tools/Calculators/RF/FreeSpaceLoss/*.cpp
+    src/Tools/Calculators/RF/FrequencyPlanning/ImageFrequency/*.cpp
+    src/Tools/Calculators/RF/FrequencyPlanning/SecondaryImage/*.cpp
+    src/Tools/Calculators/General/VoltageDivider/*.cpp
+    src/Tools/Calculators/General/EquivalentCalculators/ParallelInductors/*.cpp
+    src/Tools/Calculators/General/EquivalentCalculators/ParallelResistors/*.cpp
+    src/Tools/Calculators/General/EquivalentCalculators/SeriesCapacitors/*.cpp
+
+)
+
+file(GLOB CALCULATORS_HEADERS
+    src/Tools/Calculators/RF/ReflectionCalculators/gamma_calculator/*.h
+    src/Tools/Calculators/RF/ReflectionCalculators/impedance_calculator/*.h
+    src/Tools/Calculators/RF/ReflectionCalculators/SWR_S11_calculator/*.h
+    src/Tools/Calculators/RF/OctaveBandwidthwCalculator/*.h
+    src/Tools/Calculators/RF/RFPowerConverter/*.h
+    src/Tools/Calculators/RF/FrequencyToWavelength/*.h
+    src/Tools/Calculators/RF/FreeSpaceLoss/*.h
+    src/Tools/Calculators/RF/FrequencyPlanning/ImageFrequency/*.h
+    src/Tools/Calculators/RF/FrequencyPlanning/SecondaryImage/*.h
+    src/Tools/Calculators/General/VoltageDivider/*.h
+    src/Tools/Calculators/General/EquivalentCalculators/ParallelInductors/*.h
+    src/Tools/Calculators/General/EquivalentCalculators/ParallelResistors/*.h
+    src/Tools/Calculators/General/EquivalentCalculators/SeriesCapacitors/*.h
+)
+
+set(spar_viewer_sources
+    src/main.cpp
+    ${UI_SOURCES}
+    ${PLOT_WIDGETS_SOURCES}
+    ${CUSTOM_WIDGETS_SOURCES}
+    ${SCHEMATIC_SOURCES}
+    ${SPAR_SOURCES}
+    ${SPAR_SPECIAL_COMPONENTS}
+    ${MISC_SOURCES}
+    ${TOOLS_SOURCES}
+    ${CALCULATORS_SOURCES}
+    ${QCUSTOMPLOT_SOURCE}
+)
+
+set(spar_viewer_moc_headers
+    ${UI_HEADERS}
+    ${PLOT_WIDGETS_HEADERS}
+    ${CUSTOM_WIDGETS_HEADERS}
+    ${SCHEMATIC_HEADERS}
+    ${SPAR_HEADERS}
+    ${MISC_HEADERS}
+    ${TOOLS_HEADERS}
+    ${CALCULATORS_HEADERS}
+    ${QCUSTOMPLOT_HEADER}
+)
+
+SET(RESOURCES src/qucs-s-spar-viewer.qrc)
 
 QT6_WRAP_CPP( spar_viewer_moc_sources ${spar_viewer_moc_headers} )
 QT6_ADD_RESOURCES(RESOURCES_SRCS ${RESOURCES})
@@ -106,9 +251,9 @@ IF(APPLE)
   SET(MACOSX_BUNDLE_ICON_FILE qucs-s-spar-viewer.icns)
 
   # set where in the bundle to put the icns file
-  SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../qucs/bitmaps/qucs-s-spar-viewer.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/src/bitmaps/qucs-s-spar-viewer.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
   # include the icns file in the target
-  SET(spar_viewer_sources ${spar_viewer_sources} ${CMAKE_CURRENT_SOURCE_DIR}/../qucs/bitmaps/qucs-s-spar-viewer.icns)
+  SET(spar_viewer_sources ${spar_viewer_sources} ${CMAKE_CURRENT_SOURCE_DIR}/src/bitmaps/qucs-s-spar-viewer.icns)
 
 ENDIF(APPLE)
 
@@ -118,7 +263,12 @@ ADD_EXECUTABLE( ${QUCS_NAME}spar-viewer MACOSX_BUNDLE WIN32
   ${RESOURCES_SRCS}
 )
 
-TARGET_LINK_LIBRARIES( ${QUCS_NAME}spar-viewer Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Charts )
+target_include_directories(${QUCS_NAME}spar-viewer
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+TARGET_LINK_LIBRARIES( ${QUCS_NAME}spar-viewer Qt6::Core Qt6::Gui Qt6::Widgets Qt6::PrintSupport)
 SET_TARGET_PROPERTIES(${QUCS_NAME}spar-viewer PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 #INSTALL (TARGETS ${QUCS_NAME}spar-viewer DESTINATION bin)
 #
@@ -146,6 +296,34 @@ INSTALL(TARGETS ${QUCS_NAME}spar-viewer
     RUNTIME DESTINATION bin COMPONENT Runtime
     )
 
+#
+# Install themes folder next to the binary
+#
+IF(APPLE)
+    # For macOS bundle - install inside the app bundle
+    INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/src/themes
+        DESTINATION bin/${QUCS_NAME}spar-viewer.app/Contents/MacOS
+        COMPONENT Runtime
+        FILES_MATCHING PATTERN "*.qss"
+        PATTERN "*.txt"
+    )
+ELSEIF(WIN32)
+    # For Windows - install next to the .exe
+    INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/src/themes
+        DESTINATION bin
+        COMPONENT Runtime
+        FILES_MATCHING PATTERN "*.qss"
+        PATTERN "*.txt"
+    )
+ELSE()
+    # For Linux - install next to the binary
+    INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/src/themes
+        DESTINATION bin
+        COMPONENT Runtime
+        FILES_MATCHING PATTERN "*.qss"
+        PATTERN "*.txt"
+    )
+ENDIF()
 
 #
 # Install needed Qt plugins by copying directories from the qt installation
